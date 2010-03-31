@@ -1,0 +1,26 @@
+name: Joy
+version: 1.0
+cabal-version: >= 1.2
+build-type: Simple
+license: BSD3
+license-file: LICENSE
+copyright: Copyright (c) 2010 Dan Knapp
+author: Dan Knapp
+maintainer: dankna@gmail.com
+homepage: http://dankna.com/software/
+bug-reports: http://dankna.com/issues/create/
+category: Language, Database
+synopsis: Parser generator
+description:
+  This is a parser generaor for Haskell.  Compared to Happy, it
+  does not support unification or GLR, but does support shift-actions,
+  actions which happen in the middle of a production.
+
+Executable:
+  main-is: Main
+  other-modules: Joy.LALR1,
+  		 Joy.Specification
+  build-depends: base >= 4.1 && < 5,
+                 template-haskell,
+                 
+                 haskell-src-exts >= 1.8.2
