@@ -7,7 +7,7 @@ import Control.Monad.Error
 MONAD { Parse }
 ERROR { parseError }
 
-LEXER NAME { lexer }
+LEXER
 | '[0-9]+'      { Integer $ read $0 }
 | '\+'          { Plus }
 | '-'	        { Minus }

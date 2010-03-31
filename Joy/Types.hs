@@ -9,10 +9,14 @@ module Joy.Types (
                   ClientExpression(..),
                   ClientAction(..),
                   SpecificationParseError(..),
+                  Generation(..),
+                  GenerationError(..),
+                  GenerationState(..),
                  )
     where
 
 import Control.Monad.Error
+import Control.Monad.State
 import Data.Word
 
 
@@ -89,3 +93,26 @@ instance Show SpecificationParseError where
           ++ (show $ specificationParseErrorLineNumber error)
           ++ " of grammar specification: "
           ++ (specificationParseErrorMessage error)
+
+
+type Generation = ErrorT GenerationError (StateT GenerationState IO)
+
+
+data GenerationError = GenerationError String
+instance Error GenerationError where
+    strMsg message = GenerationError message
+instance Show GenerationError where
+    show (GenerationError string) = string
+
+
+data GenerationState = GenerationState {
+        generationStateSpecification :: Specification,
+        generationStateUserLexer :: Bool,
+        generationStateMaybeMonadType :: Maybe ClientType,
+        generationStateMaybeLexerName :: Maybe ClientExpression,
+        generationStateMaybeErrorFunction :: Maybe ClientExpression,
+        generationStateTerminals :: [GrammarSymbol],
+        generationStateNonterminals :: [GrammarSymbol],
+        generationStateProductions
+            :: [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
+      } deriving (Show)

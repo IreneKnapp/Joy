@@ -391,6 +391,7 @@ readStringLiteral :: String -> Parse (String, String)
 readStringLiteral input = do
   let delimiter = head input
       lex' "" = throwParseError $ "Unexpected end of input in string literal."
+      lex' "\n" = throwParseError $ "Unexpected newline in string literal."
       lex' (c:d:rest) | (c == d) && (c == delimiter) = do
                             (result, rest) <- lex' rest
                             return ([c] ++ result, rest)
