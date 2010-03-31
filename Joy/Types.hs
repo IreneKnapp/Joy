@@ -1,8 +1,10 @@
 module Joy.Types (
+                  LineNumber(..),
                   Specification(..),
                   JoyVersion(..),
                   ClientLanguage(..),
                   Declaration(..),
+                  location,
                   GrammarSymbol(..),
                   ClientRaw(..),
                   ClientType(..),
@@ -18,6 +20,9 @@ module Joy.Types (
 import Control.Monad.Error
 import Control.Monad.State
 import Data.Word
+
+
+type LineNumber = Word64
 
 
 data Specification = Specification {
@@ -37,13 +42,16 @@ data ClientLanguage = Haskell
                       deriving (Show)
 
 
-data Declaration = MonadDeclaration ClientType
-                 | ErrorDeclaration ClientExpression
-                 | UserLexerDeclaration ClientExpression
-                 | LexerDeclaration (Maybe ClientExpression)
+data Declaration = MonadDeclaration LineNumber ClientType
+                 | ErrorDeclaration LineNumber ClientExpression
+                 | UserLexerDeclaration LineNumber ClientExpression
+                 | LexerDeclaration LineNumber
+                                    (Maybe ClientExpression)
                                     [(String, ClientExpression)]
-                 | TokensDeclaration ClientType [(GrammarSymbol, String)]
+                 | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
                  | NonterminalDeclaration {
+                     nonterminalDeclarationLineNumber
+                         :: LineNumber,
                      nonterminalDeclarationGrammarSymbol
                          :: GrammarSymbol,
                      nonterminalDeclarationType
@@ -54,6 +62,15 @@ data Declaration = MonadDeclaration ClientType
                          :: [([GrammarSymbol], ClientAction)]
                    }
                    deriving (Show)
+
+
+location :: Declaration -> LineNumber
+location (MonadDeclaration result _) = result
+location (ErrorDeclaration result _) = result
+location (UserLexerDeclaration result _) = result
+location (LexerDeclaration result _ _) = result
+location (TokensDeclaration result _ _) = result
+location result@(NonterminalDeclaration { }) = nonterminalDeclarationLineNumber result
 
 
 data GrammarSymbol = IdentifierTerminal String

@@ -70,17 +70,29 @@ DeclarationList :: { [Declaration] }
     :
     { [] }
     | DeclarationList monad clientCode
-    { $1 ++ [MonadDeclaration $ ClientType $3] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [MonadDeclaration lineNumber $ ClientType $3] }
     | DeclarationList user lexer name clientCode
-    { $1 ++ [UserLexerDeclaration (ClientExpression $5)] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [UserLexerDeclaration lineNumber (ClientExpression $5)] }
     | DeclarationList error_ clientCode
-    { $1 ++ [ErrorDeclaration $ ClientExpression $3] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [ErrorDeclaration lineNumber $ ClientExpression $3] }
     | DeclarationList lexer LexerDefinitionList
-    { $1 ++ [LexerDeclaration Nothing $3] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [LexerDeclaration lineNumber Nothing $3] }
     | DeclarationList lexer name clientCode LexerDefinitionList
-    { $1 ++ [LexerDeclaration (Just (ClientExpression $4)) $5] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [LexerDeclaration lineNumber (Just (ClientExpression $4)) $5] }
     | DeclarationList token type clientCode names TokenDefinitionList
-    { $1 ++ [TokensDeclaration (ClientType $4) $6] }
+    {% do
+         lineNumber <- getLineNumber
+         return $ $1 ++ [TokensDeclaration lineNumber (ClientType $4) $6] }
     | DeclarationList NonterminalDeclaration
     { $1 ++ [$2] }
 
@@ -104,12 +116,16 @@ TokenDefinitionList :: { [(GrammarSymbol, String)] }
 NonterminalDeclaration :: { Declaration }
     : NonterminalDeclarationParserList identifier '::' clientCode
       NonterminalDeclarationRightHandSideList
-    { NonterminalDeclaration {
-        nonterminalDeclarationParsers = $1,
-        nonterminalDeclarationGrammarSymbol = Nonterminal $2,
-        nonterminalDeclarationType = ClientType $4,
-        nonterminalDeclarationRightHandSides = $5
-      } }
+    {% do
+         lineNumber <- getLineNumber
+         return NonterminalDeclaration {
+                      nonterminalDeclarationLineNumber = lineNumber,
+                      nonterminalDeclarationParsers = $1,
+                      nonterminalDeclarationGrammarSymbol = Nonterminal $2,
+                      nonterminalDeclarationType = ClientType $4,
+                      nonterminalDeclarationRightHandSides = $5
+                    }
+    }
 
 NonterminalDeclarationParserList :: { [(Bool, ClientExpression)] }
     :
@@ -146,7 +162,7 @@ IdentifierList :: { [GrammarSymbol] }
 
 data ParseState = ParseState {
       parseStateInput :: String,
-      parseStateLineNumber :: Word64,
+      parseStateLineNumber :: LineNumber,
       parseStateAtStartOfLine :: Bool,
       parseStateSectionNumber :: Int,
       parseStateLastWasHereFile :: Bool
@@ -437,5 +453,11 @@ processNonNewline :: Parse ()
 processNonNewline = do
   state <- getParseState
   putParseState $ state { parseStateAtStartOfLine = False }
+
+
+getLineNumber :: Parse LineNumber
+getLineNumber = do
+  state <- getParseState
+  return $ parseStateLineNumber state
 
 }
