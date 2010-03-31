@@ -3,6 +3,9 @@ module Main (main)
 
 import Control.Monad.Error
 import Control.Monad.State
+import Data.List
+import System.Environment
+import System.Exit
 import System.IO
 
 import Joy.Types
@@ -13,9 +16,8 @@ mkGenerationState :: Specification -> GenerationState
 mkGenerationState specification
     = GenerationState {
         generationStateSpecification = specification,
-        generationStateUserLexer = False,
         generationStateMaybeMonadType = Nothing,
-        generationStateMaybeLexerName = Nothing,
+        generationStateMaybeLexerInformation = Nothing,
         generationStateMaybeErrorFunction = Nothing,
         generationStateTerminals = [],
         generationStateNonterminals = [],
@@ -25,13 +27,42 @@ mkGenerationState specification
 
 main :: IO ()
 main = do
-  eitherErrorSpecification <- readSpecificationFile "test.joy"
+  arguments <- getArgs
+  inputFilename <- case arguments of
+    [inputFilename] -> return inputFilename
+    _ -> usage
+  eitherErrorSpecification <- readSpecificationFile inputFilename
   case eitherErrorSpecification of
     Left error -> putStrLn $ show error
     Right specification -> do
       let state = mkGenerationState specification
-      state <- execStateT (runErrorT generate) state
-      putStrLn $ show state
+      (state, result) <- evalStateT (do
+                                      result <- runErrorT generate
+                                      state <- get
+                                      return (state, result))
+                                    state
+      case result of
+        Left error -> putStrLn $ show error
+        Right () -> do
+          putStrLn $ "Monad type: "
+                     ++ (show $ generationStateMaybeMonadType state)
+          putStrLn $ "Lexer information: "
+                     ++ (show $ generationStateMaybeLexerInformation state)
+          putStrLn $ "Error function: "
+                     ++ (show $ generationStateMaybeErrorFunction state)
+          putStrLn $ "Terminals: "
+                     ++ (show $ generationStateTerminals state)
+          putStrLn $ "Nonterminals: "
+                     ++ (show $ generationStateNonterminals state)
+          putStrLn $ "Productions: "
+                     ++ (show $ generationStateProductions state)
+
+
+usage :: IO a
+usage = do
+  name <- getProgName
+  putStrLn $ "Usage: " ++ name ++ " input.joy"
+  exitFailure
 
 
 debugSpecification :: Generation ()
@@ -54,23 +85,80 @@ processDeclarations :: Generation ()
 processDeclarations = do
   processMonadDeclaration
   processErrorDeclaration
-  processLexerDeclaration
+  processLexerDeclarations
   processTokensDeclaration
   processNonterminalDeclarations
 
 
 processMonadDeclaration :: Generation ()
 processMonadDeclaration = do
-  return ()
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                                MonadDeclaration _ _ -> True
+                                _ -> False)
+                            $ specificationDeclarations
+                            $ generationStateSpecification state
+  case declarations of
+    [] -> return ()
+    [MonadDeclaration _ clientType]
+        -> put $ state { generationStateMaybeMonadType = Just clientType }
+    _ -> fail $ "Multiple MONAD declarations, at lines "
+                ++ (englishList $ map (show . location) declarations)
 
 
 processErrorDeclaration :: Generation ()
 processErrorDeclaration = do
-  return ()
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                                ErrorDeclaration _ _ -> True
+                                _ -> False)
+                            $ specificationDeclarations
+                            $ generationStateSpecification state
+  case declarations of
+    [] -> return ()
+    [ErrorDeclaration _ clientExpression]
+        -> put $ state { generationStateMaybeErrorFunction = Just clientExpression }
+    _ -> fail $ "Multiple ERROR declarations, at lines "
+                ++ (englishList $ map (show . location) declarations)
 
 
-processLexerDeclaration :: Generation ()
-processLexerDeclaration = do
+processLexerDeclarations :: Generation ()
+processLexerDeclarations = do
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                               UserLexerDeclaration _ _ _ -> True
+                               LexerDeclaration _ _ _ _ -> True
+                               _ -> False)
+                            $ specificationDeclarations
+                            $ generationStateSpecification state
+      initialDeclarations = filter (\declaration -> case declaration of
+                                     UserLexerDeclaration _ True _ -> True
+                                     LexerDeclaration _ True _ _ -> True
+                                     _ -> False)
+                                   $ specificationDeclarations
+                                   $ generationStateSpecification state
+  case declarations of
+    [] -> fail $ "No LEXER or USER LEXER declarations."
+    [declaration] -> return ()
+    _ -> do
+           let declarationsMissingNames
+                   = filter (\declaration -> case declaration of
+                                               LexerDeclaration _ _ Nothing _ -> True
+                                               _ -> False)
+                            declarations
+           case declarationsMissingNames of
+             [] -> return ()
+             [declaration]
+                 -> fail $ "Multiple LEXER declarations but missing NAME for the one at "
+                           ++ "line " ++ (show $ location declaration)
+             _ -> fail $ "Multiple LEXER declarations but missing NAMEs for the ones at "
+                         ++ "lines " ++ (englishList $ map (show.location)
+                                                           declarationsMissingNames)
+  initialDeclaration <- case initialDeclarations of
+    [] -> return $ head declarations
+    [declaration] -> return declaration
+    _ -> fail $ "Multiple INITIAL LEXER declarations, at lines "
+                ++ (englishList $ map (show . location) initialDeclarations)
   return ()
 
 
@@ -82,3 +170,12 @@ processTokensDeclaration = do
 processNonterminalDeclarations :: Generation ()
 processNonterminalDeclarations = do
   return ()
+
+
+englishList :: [String] -> String
+englishList [] = ""
+englishList [item] = item
+englishList (a:b:[]) = a ++ " and " ++ b
+englishList items = (intercalate ", " $ reverse $ drop 1 $ reverse items)
+                    ++ ", and "
+                    ++ (head $ reverse items)

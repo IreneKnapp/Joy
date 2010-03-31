@@ -52,6 +52,7 @@ Factor :: { Int }
 
 type Parse = Error ParseError
 
+
 data Token = Integer Int
            | Plus
            | Minus
@@ -59,6 +60,14 @@ data Token = Integer Int
            | Slash
            | LeftParenthesis
            | RightParenthesis
+
+
+data ParseError = ParseError String
+instance Error ParseError where
+    strMsg message = ParseError message
+instance Show ParseError where
+    show (ParseError string) = string
+
 
 main :: IO ()
 main = do

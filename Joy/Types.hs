@@ -1,10 +1,10 @@
 module Joy.Types (
                   LineNumber(..),
+                  Located(..),
                   Specification(..),
                   JoyVersion(..),
                   ClientLanguage(..),
                   Declaration(..),
-                  location,
                   GrammarSymbol(..),
                   ClientRaw(..),
                   ClientType(..),
@@ -14,6 +14,7 @@ module Joy.Types (
                   Generation(..),
                   GenerationError(..),
                   GenerationState(..),
+                  LexerInformation(..),
                  )
     where
 
@@ -23,6 +24,10 @@ import Data.Word
 
 
 type LineNumber = Word64
+
+
+class Located a where
+    location :: a -> LineNumber
 
 
 data Specification = Specification {
@@ -44,8 +49,9 @@ data ClientLanguage = Haskell
 
 data Declaration = MonadDeclaration LineNumber ClientType
                  | ErrorDeclaration LineNumber ClientExpression
-                 | UserLexerDeclaration LineNumber ClientExpression
+                 | UserLexerDeclaration LineNumber Bool ClientExpression
                  | LexerDeclaration LineNumber
+                                    Bool
                                     (Maybe ClientExpression)
                                     [(String, ClientExpression)]
                  | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
@@ -64,13 +70,14 @@ data Declaration = MonadDeclaration LineNumber ClientType
                    deriving (Show)
 
 
-location :: Declaration -> LineNumber
-location (MonadDeclaration result _) = result
-location (ErrorDeclaration result _) = result
-location (UserLexerDeclaration result _) = result
-location (LexerDeclaration result _ _) = result
-location (TokensDeclaration result _ _) = result
-location result@(NonterminalDeclaration { }) = nonterminalDeclarationLineNumber result
+instance Located Declaration where
+    location (MonadDeclaration result _) = result
+    location (ErrorDeclaration result _) = result
+    location (UserLexerDeclaration result _ _) = result
+    location (LexerDeclaration result _ _ _) = result
+    location (TokensDeclaration result _ _) = result
+    location result@(NonterminalDeclaration { })
+        = nonterminalDeclarationLineNumber result
 
 
 data GrammarSymbol = IdentifierTerminal String
@@ -124,12 +131,19 @@ instance Show GenerationError where
 
 data GenerationState = GenerationState {
         generationStateSpecification :: Specification,
-        generationStateUserLexer :: Bool,
         generationStateMaybeMonadType :: Maybe ClientType,
-        generationStateMaybeLexerName :: Maybe ClientExpression,
+        generationStateMaybeLexerInformation :: Maybe LexerInformation,
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
         generationStateTerminals :: [GrammarSymbol],
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions
             :: [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
       } deriving (Show)
+
+
+data LexerInformation = LexerInformation {
+        lexerInformationInitialName :: ClientExpression,
+        lexerInformationInitialDeclaration :: Declaration,
+        lexerInformationUserDeclarations :: [Declaration],
+        lexerInformationNonuserDeclarations :: [Declaration]
+    } deriving (Show)

@@ -20,31 +20,32 @@ import Debug.Trace
 
 %tokentype { Token }
 %monad { Parse } { >>= } { return }
-%lexer { lexerTakingContinuation } { EndOfInput }
+%lexer { lexerTakingContinuation } { EndOfInput _ }
 %error { parseError }
 
 %token
-        sectionSeparator      { SectionSeparator }
-        hereFile              { HereFile $$ }
-        clientCode            { ClientCode $$ }
-        languageLine          { LanguageLine _ _ }
-        identifier            { Identifier $$ }
-        string                { StringLiteral $$ }
-        '|'                   { Bar }
-        '::'                  { ColonColon }
-        '('                   { LeftParenthesis }
-        ')'                   { RightParenthesis }
-        error_                { KeywordError }
-        lexer                 { KeywordLexer }
-        monad                 { KeywordMonad }
-        monadic               { KeywordMonadic }
-        name                  { KeywordName }
-        names                 { KeywordNames }
-        parser                { KeywordParser }
-        partial               { KeywordPartial }
-        token                 { KeywordToken }
-        type                  { KeywordType }
-        user                  { KeywordUser }
+        sectionSeparator      { SectionSeparator _ }
+        hereFile              { HereFile _ _ }
+        clientCode            { ClientCode _ _ }
+        languageLine          { LanguageLine _ _ _ }
+        identifier            { Identifier _ _ }
+        string                { StringLiteral _ _ }
+        '|'                   { Bar _ }
+        '::'                  { ColonColon _ }
+        '('                   { LeftParenthesis _ }
+        ')'                   { RightParenthesis _ }
+        error_                { KeywordError _ }
+        initial               { KeywordInitial _ }
+        lexer                 { KeywordLexer _ }
+        monad                 { KeywordMonad _ }
+        monadic               { KeywordMonadic _ }
+        name                  { KeywordName _ }
+        names                 { KeywordNames _ }
+        parser                { KeywordParser _ }
+        partial               { KeywordPartial _ }
+        token                 { KeywordToken _ }
+        type                  { KeywordType _ }
+        user                  { KeywordUser _ }
 %%
 
 Specification :: { Specification }
@@ -54,14 +55,14 @@ Specification :: { Specification }
       DeclarationList
       sectionSeparator
       hereFile
-    { case $1 of
-        LanguageLine joyVersion clientLanguage
+    { case ($1, $2, $6) of
+        (LanguageLine _ joyVersion clientLanguage, HereFile _ header, HereFile _ footer)
             -> Specification {
                  specificationJoyVersion = joyVersion,
                  specificationClientLanguage = clientLanguage,
-                 specificationOutputHeader = ClientRaw $2,
+                 specificationOutputHeader = ClientRaw header,
                  specificationDeclarations = $4,
-                 specificationOutputFooter = ClientRaw $6
+                 specificationOutputFooter = ClientRaw footer
                }
     }
 
@@ -69,71 +70,135 @@ Specification :: { Specification }
 DeclarationList :: { [Declaration] }
     :
     { [] }
+    
     | DeclarationList monad clientCode
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [MonadDeclaration lineNumber $ ClientType $3] }
-    | DeclarationList user lexer name clientCode
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [UserLexerDeclaration lineNumber (ClientExpression $5)] }
+    { case ($2, $3) of
+        (KeywordMonad lineNumber, ClientCode _ body)
+          -> $1 ++ [MonadDeclaration lineNumber $ ClientType body] }
+    
+    | DeclarationList user MaybeInitial lexer name clientCode
+    { case ($2, $3, $6) of
+        (KeywordUser lineNumber, (_, maybeInitial), ClientCode _ body)
+          -> $1 ++ [UserLexerDeclaration lineNumber
+                                         maybeInitial
+                                         (ClientExpression body)] }
+    
     | DeclarationList error_ clientCode
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [ErrorDeclaration lineNumber $ ClientExpression $3] }
-    | DeclarationList lexer LexerDefinitionList
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [LexerDeclaration lineNumber Nothing $3] }
-    | DeclarationList lexer name clientCode LexerDefinitionList
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [LexerDeclaration lineNumber (Just (ClientExpression $4)) $5] }
+    { case ($2, $3) of
+        (KeywordError lineNumber, ClientCode _ body)
+          -> $1 ++ [ErrorDeclaration lineNumber $ ClientExpression body] }
+    
+    | DeclarationList MaybeInitial lexer MaybeName LexerDefinitionList
+    { case ($2, $3) of
+        ((Nothing, maybeInitial), KeywordLexer lineNumber)
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial $4 $5]
+        ((Just lineNumber, maybeInitial), _)
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial $4 $5] }
+    
     | DeclarationList token type clientCode names TokenDefinitionList
-    {% do
-         lineNumber <- getLineNumber
-         return $ $1 ++ [TokensDeclaration lineNumber (ClientType $4) $6] }
+    { case ($2, $4) of
+        (KeywordToken lineNumber, ClientCode _ body)
+          -> $1 ++ [TokensDeclaration lineNumber (ClientType body) $6] }
+    
     | DeclarationList NonterminalDeclaration
     { $1 ++ [$2] }
+
+
+MaybeInitial :: { (Maybe LineNumber, Bool) }
+    :
+    { (Nothing, False) }
+    | initial
+    { case $1 of
+        KeywordInitial lineNumber -> (Just lineNumber, True) }
+
+
+MaybeName :: { Maybe ClientExpression }
+    :
+    { Nothing }
+    | name clientCode
+    { case $2 of
+        (ClientCode _ body) -> Just $ ClientExpression body }
 
 
 LexerDefinitionList :: { [(String, ClientExpression)] }
     :
     { [] }
     | LexerDefinitionList '|' string clientCode
-    { $1 ++ [($3, ClientExpression $4)] }
+    { case ($3, $4) of
+        (StringLiteral _ string, ClientCode _ body)
+          -> $1 ++ [(string, ClientExpression body)] }
 
 
 TokenDefinitionList :: { [(GrammarSymbol, String)] }
     :
     { [] }
     | TokenDefinitionList '|' identifier clientCode
-    { $1 ++ [(IdentifierTerminal $3, $4)] }
+    {% case ($3, $4) of
+         (Identifier terminalLineNumber terminal, ClientCode _ body)
+           -> if isLower $ head terminal
+              then return $ $1 ++ [(IdentifierTerminal terminal, body)]
+              else throwParseError
+                       $ "Terminal must begin with a lowercase letter at line "
+                         ++ (show terminalLineNumber) }
     | TokenDefinitionList '|' string clientCode
-    { $1 ++ [(StringTerminal $3, $4)] }
+    { case ($3, $4) of
+         (StringLiteral _ terminal, ClientCode _ body)
+           -> $1 ++ [(StringTerminal terminal, body)] }
 
 
 NonterminalDeclaration :: { Declaration }
     : NonterminalDeclarationParserList identifier '::' clientCode
       NonterminalDeclarationRightHandSideList
-    {% do
-         lineNumber <- getLineNumber
-         return NonterminalDeclaration {
-                      nonterminalDeclarationLineNumber = lineNumber,
-                      nonterminalDeclarationParsers = $1,
-                      nonterminalDeclarationGrammarSymbol = Nonterminal $2,
-                      nonterminalDeclarationType = ClientType $4,
-                      nonterminalDeclarationRightHandSides = $5
-                    }
+    {% case ($1, $2, $4) of
+         ((Nothing, parsers),
+          Identifier lineNumber@nameLineNumber name,
+          ClientCode _ body)
+           -> do
+             if isUpper $ head name
+               then return ()
+               else throwParseError
+                    $ "Nonterminal must begin with an uppercase letter at line "
+                      ++ (show nameLineNumber)
+             return $ NonterminalDeclaration {
+                          nonterminalDeclarationLineNumber = lineNumber,
+                          nonterminalDeclarationParsers = parsers,
+                          nonterminalDeclarationGrammarSymbol = Nonterminal name,
+                          nonterminalDeclarationType = ClientType body,
+                          nonterminalDeclarationRightHandSides = $5
+                        }
+         ((Just lineNumber, parsers),
+          Identifier nameLineNumber name,
+          ClientCode _ body)
+           -> do
+             if isUpper $ head name
+               then return ()
+               else throwParseError
+                    $ "Nonterminal must begin with an uppercase letter at line "
+                      ++ (show nameLineNumber)
+             return $ NonterminalDeclaration {
+                          nonterminalDeclarationLineNumber = lineNumber,
+                          nonterminalDeclarationParsers = parsers,
+                          nonterminalDeclarationGrammarSymbol = Nonterminal name,
+                          nonterminalDeclarationType = ClientType body,
+                          nonterminalDeclarationRightHandSides = $5
+                        }
     }
 
-NonterminalDeclarationParserList :: { [(Bool, ClientExpression)] }
+NonterminalDeclarationParserList :: { (Maybe LineNumber, [(Bool, ClientExpression)]) }
     :
-    { [] }
+    { (Nothing, []) }
     | NonterminalDeclarationParserList parser clientCode
-    { $1 ++ [(False, ClientExpression $3)] }
+    { case ($1, $2, $3) of
+        ((Nothing, start), KeywordParser lineNumber, ClientCode _ body)
+          -> (Just lineNumber, start ++ [(False, ClientExpression body)])
+        ((Just lineNumber, start), _, ClientCode _ body)
+          -> (Just lineNumber, start ++ [(False, ClientExpression body)]) }
     | NonterminalDeclarationParserList partial parser clientCode
-    { $1 ++ [(True, ClientExpression $4)] }
+    { case ($1, $2, $4) of
+        ((Nothing, start), KeywordPartial lineNumber, ClientCode _ body)
+          -> (Just lineNumber, start ++ [(True, ClientExpression body)])
+        ((Just lineNumber, start), _, ClientCode _ body)
+          -> (Just lineNumber, start ++ [(True, ClientExpression body)]) }
 
 NonterminalDeclarationRightHandSideList :: { [([GrammarSymbol], ClientAction)] }
     : NonterminalDeclarationRightHandSide
@@ -143,19 +208,27 @@ NonterminalDeclarationRightHandSideList :: { [([GrammarSymbol], ClientAction)] }
 
 NonterminalDeclarationRightHandSide :: { ([GrammarSymbol], ClientAction) }
     : '|' IdentifierList clientCode
-    { ($2, ClientAction False $3) }
+    { case $3 of
+        (ClientCode _ body)
+          -> ($2, ClientAction False body) }
     | '|' IdentifierList monadic clientCode
-    { ($2, ClientAction True $4) }
+    { case $4 of
+        (ClientCode _ body)
+          -> ($2, ClientAction True body) }
 
 IdentifierList :: { [GrammarSymbol] }
     :
     { [] }
     | IdentifierList identifier
-    { $1 ++ [if isUpper $ head $2
-              then Nonterminal $2
-              else IdentifierTerminal $2] }
+    { case $2 of
+        (Identifier _ identifier)
+          -> $1 ++ [if isUpper $ head identifier
+                      then Nonterminal identifier
+                      else IdentifierTerminal identifier] }
     | IdentifierList string
-    { $1 ++ [StringTerminal $2] }
+    { case $2 of
+        (StringLiteral _ string)
+          -> $1 ++ [StringTerminal string] }
 
 {
 
@@ -172,54 +245,80 @@ data ParseState = ParseState {
 type Parse = ErrorT SpecificationParseError (State ParseState)
 
 
-data Token = EndOfInput
-           | SectionSeparator
-           | HereFile String
-           | ClientCode String
-           | LanguageLine JoyVersion ClientLanguage
-           | Identifier String
-           | StringLiteral String
-           | Bar
-           | ColonColon
-           | LeftParenthesis
-           | RightParenthesis
-           | KeywordError
-           | KeywordLexer
-           | KeywordMonad
-           | KeywordMonadic
-           | KeywordName
-           | KeywordNames
-           | KeywordParser
-           | KeywordPartial
-           | KeywordToken
-           | KeywordType
-           | KeywordUser
+data Token = EndOfInput LineNumber
+           | SectionSeparator LineNumber
+           | HereFile LineNumber String
+           | ClientCode LineNumber String
+           | LanguageLine LineNumber JoyVersion ClientLanguage
+           | Identifier LineNumber String
+           | StringLiteral LineNumber String
+           | Bar LineNumber
+           | ColonColon LineNumber
+           | LeftParenthesis LineNumber
+           | RightParenthesis LineNumber
+           | KeywordError LineNumber
+           | KeywordInitial LineNumber
+           | KeywordLexer LineNumber
+           | KeywordMonad LineNumber
+           | KeywordMonadic LineNumber
+           | KeywordName LineNumber
+           | KeywordNames LineNumber
+           | KeywordParser LineNumber
+           | KeywordPartial LineNumber
+           | KeywordToken LineNumber
+           | KeywordType LineNumber
+           | KeywordUser LineNumber
+instance Located Token where
+    location (EndOfInput result) = result
+    location (SectionSeparator result) = result
+    location (HereFile result _) = result
+    location (ClientCode result _) = result
+    location (LanguageLine result _ _) = result
+    location (Identifier result _) = result
+    location (StringLiteral result _) = result
+    location (Bar result) = result
+    location (ColonColon result) = result
+    location (LeftParenthesis result) = result
+    location (RightParenthesis result) = result
+    location (KeywordError result) = result
+    location (KeywordInitial result) = result
+    location (KeywordLexer result) = result
+    location (KeywordMonad result) = result
+    location (KeywordMonadic result) = result
+    location (KeywordName result) = result
+    location (KeywordNames result) = result
+    location (KeywordParser result) = result
+    location (KeywordPartial result) = result
+    location (KeywordToken result) = result
+    location (KeywordType result) = result
+    location (KeywordUser result) = result
 instance Show Token where
-    show EndOfInput = "<eof>"
-    show SectionSeparator = "--"
-    show (HereFile string) = "<here-file>"
-    show (ClientCode string) = "{ " ++ string ++ "}"
-    show (LanguageLine _ _) = "LANGUAGE"
-    show (Identifier string) = string
-    show (StringLiteral string) = "'" ++ (let t "" = ""
-                                              t ('\'':rest) = "''" ++ t rest
-                                              t (c:rest) = [c] ++ t rest
-                                          in t string) ++ "'"
-    show Bar = "'|'"
-    show ColonColon = "'::'"
-    show LeftParenthesis = "'('"
-    show RightParenthesis = "')'"
-    show KeywordError = "ERROR"
-    show KeywordLexer = "LEXER"
-    show KeywordMonad = "MONAD"
-    show KeywordMonadic = "MONADIC"
-    show KeywordName = "NAME"
-    show KeywordNames = "NAMES"
-    show KeywordParser = "PARSER"
-    show KeywordPartial = "PARTIAL"
-    show KeywordToken = "TOKEN"
-    show KeywordType = "TYPE"
-    show KeywordUser = "USER"
+    show (EndOfInput _) = "<eof>"
+    show (SectionSeparator _) = "--"
+    show (HereFile _ string) = "<here-file>"
+    show (ClientCode _ string) = "{ " ++ string ++ "}"
+    show (LanguageLine _ _ _) = "LANGUAGE"
+    show (Identifier _ string) = string
+    show (StringLiteral _ string) = "'" ++ (let t "" = ""
+                                                t ('\'':rest) = "''" ++ t rest
+                                                t (c:rest) = [c] ++ t rest
+                                            in t string) ++ "'"
+    show (Bar _) = "'|'"
+    show (ColonColon _) = "'::'"
+    show (LeftParenthesis _) = "'('"
+    show (RightParenthesis _) = "')'"
+    show (KeywordError _) = "ERROR"
+    show (KeywordInitial _) = "INITIAL"
+    show (KeywordLexer _) = "LEXER"
+    show (KeywordMonad _) = "MONAD"
+    show (KeywordMonadic _) = "MONADIC"
+    show (KeywordName _) = "NAME"
+    show (KeywordNames _) = "NAMES"
+    show (KeywordParser _) = "PARSER"
+    show (KeywordPartial _) = "PARTIAL"
+    show (KeywordToken _) = "TOKEN"
+    show (KeywordType _) = "TYPE"
+    show (KeywordUser _) = "USER"
 
 readSpecificationFile :: FilePath -> IO (Either SpecificationParseError Specification)
 readSpecificationFile filename = do
@@ -285,15 +384,18 @@ lexerWrapper = do
   putParseState $ state {
                       parseStateInput = rest,
                       parseStateLastWasHereFile = case token of
-                                                    HereFile _ -> True
+                                                    HereFile _ _ -> True
                                                     _ -> False
                     }
   return token
 
 
 lexer :: String -> Parse (Token, String)
-lexer "" = return (EndOfInput, "")
+lexer "" = do
+  lineNumber <- getLineNumber
+  return (EndOfInput lineNumber, "")
 lexer all@('-':'-':'\n':rest) = do
+  lineNumber <- getLineNumber
   processNewline
   state <- getParseState
   let atStartOfLine = parseStateAtStartOfLine state
@@ -304,36 +406,50 @@ lexer all@('-':'-':'\n':rest) = do
                              parseStateAtStartOfLine = False,
                              parseStateSectionNumber = sectionNumber + 1
                            }
-      return (SectionSeparator, rest)
+      return (SectionSeparator lineNumber, rest)
     else throwParseError $ "Unexpected character '-'."
 lexer ('\n':rest) = do
   processNewline
   lexer rest
 lexer all@('\'':_) = do
+  lineNumber <- getLineNumber
   processNonNewline
   (string, rest) <- readStringLiteral all
-  return (StringLiteral string, rest)
+  return (StringLiteral lineNumber string, rest)
 lexer all@('"':_) = do
+  lineNumber <- getLineNumber
   processNonNewline
   (string, rest) <- readStringLiteral all
-  return (StringLiteral string, rest)
+  return (StringLiteral lineNumber string, rest)
+lexer ('{':'-':rest) = do
+  rest <- skipBalancedComments rest
+  lexer rest
 lexer all@('{':_) = do
+  lineNumber <- getLineNumber
   processNonNewline
   (code, rest) <- readClientCode all
-  return (ClientCode code, rest)
+  return (ClientCode lineNumber code, rest)
+lexer ('-':'}':rest) = do
+  lineNumber <- getLineNumber
+  throwParseError $ "Unbalanced '-}'."
 lexer ('|':rest) = do
+  lineNumber <- getLineNumber
   processNonNewline
-  return (Bar, rest)
+  return (Bar lineNumber, rest)
 lexer (':':':':rest) = do
+  lineNumber <- getLineNumber
   processNonNewline
-  return (ColonColon, rest)
+  return (ColonColon lineNumber, rest)
 lexer ('(':rest) = do
+  lineNumber <- getLineNumber
   processNonNewline
-  return (LeftParenthesis, rest)
+  return (LeftParenthesis lineNumber, rest)
 lexer (')':rest) = do
+  lineNumber <- getLineNumber
   processNonNewline
-  return (RightParenthesis, rest)
+  return (RightParenthesis lineNumber, rest)
 lexer all@(c:rest) = do
+  lineNumber <- getLineNumber
   processNonNewline
   if isSpace c
     then lexer rest
@@ -341,25 +457,24 @@ lexer all@(c:rest) = do
       then do
         (identifier, rest) <- readIdentifier all
         let token = case identifier of
-                      _ | identifier == "ERROR" -> KeywordError
-                        | identifier == "LEXER" -> KeywordLexer
-                        | identifier == "MONAD" -> KeywordMonad
-                        | identifier == "MONADIC" -> KeywordMonadic
-                        | identifier == "NAME" -> KeywordName
-                        | identifier == "NAMES" -> KeywordNames
-                        | identifier == "PARSER" -> KeywordParser
-                        | identifier == "PARTIAL" -> KeywordPartial
-                        | identifier == "TOKEN" -> KeywordToken
-                        | identifier == "TYPE" -> KeywordType
-                        | identifier == "USER" -> KeywordUser
-                        | otherwise -> Identifier identifier
+                      _ | identifier == "ERROR" -> KeywordError lineNumber
+                        | identifier == "INITIAL" -> KeywordInitial lineNumber
+                        | identifier == "LEXER" -> KeywordLexer lineNumber
+                        | identifier == "MONAD" -> KeywordMonad lineNumber
+                        | identifier == "MONADIC" -> KeywordMonadic lineNumber
+                        | identifier == "NAME" -> KeywordName lineNumber
+                        | identifier == "NAMES" -> KeywordNames lineNumber
+                        | identifier == "PARSER" -> KeywordParser lineNumber
+                        | identifier == "PARTIAL" -> KeywordPartial lineNumber
+                        | identifier == "TOKEN" -> KeywordToken lineNumber
+                        | identifier == "TYPE" -> KeywordType lineNumber
+                        | identifier == "USER" -> KeywordUser lineNumber
+                        | otherwise -> Identifier lineNumber identifier
         return (token, rest)
-      else do
-        state <- getParseState
-        let lineNumber = parseStateLineNumber state
-        throwParseError
-          $ "Unexpected character " ++ (show c) ++ " on line " ++ (show lineNumber)
-            ++ "."
+      else throwParseError
+             $ "Unexpected character " ++ (show c)
+               ++ " on line " ++ (show lineNumber)
+               ++ "."
 
 
 languageLineLexer :: String -> Parse (Token, String)
@@ -373,7 +488,7 @@ languageLineLexer input = do
   putParseState $ state { parseStateLineNumber = lineNumber + 1 }
   case lineWords of
     ["LANGUAGE", "Joy/1.0", "Haskell"]
-        -> return (LanguageLine JoyVersion1 Haskell, rest)
+        -> return (LanguageLine lineNumber JoyVersion1 Haskell, rest)
     ["LANGUAGE", "Joy/1.0", clientLanguage]
         -> throwParseError $ "Unknown client language " ++ clientLanguage ++ "."
     ["LANGUAGE", joyVersion, _]
@@ -381,8 +496,11 @@ languageLineLexer input = do
     _ -> throwParseError $ "Invalid or missing LANGUAGE line." ++ show input
 
 hereFileLexer :: String -> Parse (Token, String)
-hereFileLexer "" = return (EndOfInput, "")
+hereFileLexer "" = do
+  lineNumber <- getLineNumber
+  return (EndOfInput lineNumber, "")
 hereFileLexer input = do
+  lineNumber <- getLineNumber
   let lex' "" = return ("", "")
       lex' all@('-':'-':'\n':_) = return ("", all)
       lex' ('\n':rest) = do
@@ -395,7 +513,7 @@ hereFileLexer input = do
   (result, rest) <- lex' input
   state <- getParseState
   putParseState $ state { parseStateLastWasHereFile = True }
-  return (HereFile result, rest)
+  return (HereFile lineNumber result, rest)
 
 
 readIdentifier :: String -> Parse (String, String)
@@ -437,6 +555,30 @@ readClientCode input = do
                               return ([c] ++ result, rest)
       lex' depth "" = throwParseError $ "Unexpected end of input in client code."
   lex' 0 input
+
+
+skipBalancedComments :: String -> Parse String
+skipBalancedComments input = do
+  startLineNumber <- getLineNumber
+  let skipBalancedComments' input =
+          case input of
+            ('{':'-':rest) -> do
+                                processNonNewline
+                                rest <- skipBalancedComments' rest
+                                skipBalancedComments' rest
+            ('-':'}':rest) -> do
+                                processNonNewline
+                                return $ rest
+            ('\n':rest) -> do
+                                processNewline
+                                skipBalancedComments' rest
+            (c:rest) -> do
+                                processNonNewline
+                                skipBalancedComments' rest
+            "" -> do
+                                throwParseError
+                                  $ "Unbalanced '{-' on line " ++ (show startLineNumber)
+  skipBalancedComments' input
 
 
 processNewline :: Parse ()
