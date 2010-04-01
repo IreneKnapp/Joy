@@ -1,5 +1,6 @@
 module Joy.Types (
                   LineNumber(..),
+                  UniqueID(..),
                   Located(..),
                   Specification(..),
                   JoyVersion(..),
@@ -11,6 +12,11 @@ module Joy.Types (
                   ClientExpression(..),
                   ClientAction(..),
                   SpecificationParseError(..),
+                  EnumSet,
+                  DFA(..),
+                  DFAState(..),
+                  NFA(..),
+                  NFAState(..),
                   Generation(..),
                   GenerationError(..),
                   GenerationState(..),
@@ -20,10 +26,17 @@ module Joy.Types (
 
 import Control.Monad.Error
 import Control.Monad.State
+import Data.Map (Map)
+import Data.Set (Set)
 import Data.Word
+
+import Joy.EnumSets
 
 
 type LineNumber = Word64
+
+
+type UniqueID = Word64
 
 
 class Located a where
@@ -36,15 +49,13 @@ data Specification = Specification {
       specificationDeclarations :: [Declaration],
       specificationOutputHeader :: ClientRaw,
       specificationOutputFooter :: ClientRaw
-    } deriving (Show)
+    }
 
 
 data JoyVersion = JoyVersion1
-                  deriving (Show)
 
 
 data ClientLanguage = Haskell
-                      deriving (Show)
 
 
 data Declaration = MonadDeclaration LineNumber ClientType
@@ -67,7 +78,6 @@ data Declaration = MonadDeclaration LineNumber ClientType
                      nonterminalDeclarationRightHandSides
                          :: [([GrammarSymbol], ClientAction)]
                    }
-                   deriving (Show)
 
 
 instance Located Declaration where
@@ -83,28 +93,24 @@ instance Located Declaration where
 data GrammarSymbol = IdentifierTerminal String
                    | StringTerminal String
                    | Nonterminal String
-                     deriving (Eq, Show)
+                     deriving (Eq)
 
 
 data ClientRaw = ClientRaw String
-                 deriving (Show)
 
 
 data ClientType = ClientType String
-                  deriving (Show)
 
 
 data ClientExpression = ClientExpression String
-                        deriving (Show)
 
 
 data ClientAction = ClientAction Bool String
-                    deriving (Show)
 
 
 data SpecificationParseError = SpecificationParseError {
       specificationParseErrorMessage :: String,
-      specificationParseErrorLineNumber :: Word64
+      specificationParseErrorLineNumber :: LineNumber
     }
 instance Error SpecificationParseError where
     strMsg message = SpecificationParseError {
@@ -119,6 +125,30 @@ instance Show SpecificationParseError where
           ++ (specificationParseErrorMessage error)
 
 
+data DFA input data' = DFA (Map UniqueID (DFAState input data'))
+                           (DFAState input data')
+
+
+data DFAState input data' = DFAState {
+      dfaStateID :: UniqueID,
+      dfaStateAccepting :: Bool,
+      dfaStateSuccessors :: Map input UniqueID,
+      dfaStateData :: data'
+    }
+
+
+data NFA input data' = NFA (Map UniqueID (NFAState input data'))
+                           (Set (NFAState input data'))
+
+
+data NFAState input data' = NFAState {
+      nfaStateID :: UniqueID,
+      nfaStateAccepting :: Bool,
+      nfaStateSuccessors :: Map input (Set UniqueID),
+      nfaStateData :: data'
+    }
+
+
 type Generation = ErrorT GenerationError (StateT GenerationState IO)
 
 
@@ -130,20 +160,22 @@ instance Show GenerationError where
 
 
 data GenerationState = GenerationState {
+        generationStateUniqueIDCounter :: UniqueID,
         generationStateSpecification :: Specification,
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
+        generationStateCompiledLexers :: [(String, DFA Char ())],
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
         generationStateTerminals :: [GrammarSymbol],
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions
             :: [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
-      } deriving (Show)
+      }
 
 
 data LexerInformation = LexerInformation {
-        lexerInformationInitialName :: ClientExpression,
-        lexerInformationInitialDeclaration :: Declaration,
-        lexerInformationUserDeclarations :: [Declaration],
-        lexerInformationNonuserDeclarations :: [Declaration]
-    } deriving (Show)
+        lexerInformationMaybeInitialName :: Maybe ClientExpression,
+        lexerInformationUserNames :: [ClientExpression],
+        lexerInformationNonuserNamesAndDefinitions
+            :: [(ClientExpression, [(String, ClientExpression)])]
+    }

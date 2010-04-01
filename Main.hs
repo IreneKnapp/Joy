@@ -15,6 +15,7 @@ import Joy.Specification
 mkGenerationState :: Specification -> GenerationState
 mkGenerationState specification
     = GenerationState {
+        generationStateUniqueIDCounter = 1,
         generationStateSpecification = specification,
         generationStateMaybeMonadType = Nothing,
         generationStateMaybeLexerInformation = Nothing,
@@ -43,19 +44,7 @@ main = do
                                     state
       case result of
         Left error -> putStrLn $ show error
-        Right () -> do
-          putStrLn $ "Monad type: "
-                     ++ (show $ generationStateMaybeMonadType state)
-          putStrLn $ "Lexer information: "
-                     ++ (show $ generationStateMaybeLexerInformation state)
-          putStrLn $ "Error function: "
-                     ++ (show $ generationStateMaybeErrorFunction state)
-          putStrLn $ "Terminals: "
-                     ++ (show $ generationStateTerminals state)
-          putStrLn $ "Nonterminals: "
-                     ++ (show $ generationStateNonterminals state)
-          putStrLn $ "Productions: "
-                     ++ (show $ generationStateProductions state)
+        Right () -> return ()
 
 
 usage :: IO a
@@ -75,10 +64,31 @@ debugSpecification = do
   visitDeclaration $ specificationDeclarations specification
 
 
+debugEarlyGenerationState :: Generation ()
+debugEarlyGenerationState = do
+  state <- get
+  liftIO $ do
+    putStrLn $ "Monad type: "
+               ++ (show $ generationStateMaybeMonadType state)
+    putStrLn $ "Lexer information: "
+               ++ (show $ generationStateMaybeLexerInformation state)
+    putStrLn $ "Error function: "
+               ++ (show $ generationStateMaybeErrorFunction state)
+    putStrLn $ "Terminals: "
+               ++ (show $ generationStateTerminals state)
+    putStrLn $ "Nonterminals: "
+               ++ (show $ generationStateNonterminals state)
+    putStrLn $ "Productions: "
+               ++ (show $ generationStateProductions state)
+
+
 generate :: Generation ()
 generate = do
   -- debugSpecification
   processDeclarations
+  -- debugEarlyGenerationState
+  compileLexers
+  -- debugLexers
 
 
 processDeclarations :: Generation ()
@@ -159,7 +169,34 @@ processLexerDeclarations = do
     [declaration] -> return declaration
     _ -> fail $ "Multiple INITIAL LEXER declarations, at lines "
                 ++ (englishList $ map (show . location) initialDeclarations)
-  return ()
+  let maybeInitialName = case initialDeclaration of
+        UserLexerDeclaration _ _ name -> Just name
+        LexerDeclaration _ _ maybeName _ -> maybeName
+      userDeclarations = filter (\declaration -> case declaration of
+                                  UserLexerDeclaration _ _ _ -> True
+                                  _ -> False)
+                                declarations
+      nonuserDeclarations = filter (\declaration -> case declaration of
+                                     LexerDeclaration _ _ _ _ -> True
+                                     _ -> False)
+                                   declarations
+      userNames = map (\(UserLexerDeclaration _ _ name) -> name) userDeclarations
+      nonuserNamesAndDefinitions = map (\(LexerDeclaration _ _ maybeName definition)
+                                        -> case maybeName of
+                                             Nothing -> (ClientExpression "_Joy_lexer",
+                                                         definition)
+                                             Just name -> (name, definition))
+                                       nonuserDeclarations
+      lexerInformation = LexerInformation {
+                             lexerInformationMaybeInitialName = maybeInitialName,
+                             lexerInformationUserNames = userNames,
+                             lexerInformationNonuserNamesAndDefinitions
+                                 = nonuserNamesAndDefinitions
+                           }
+  state <- get
+  put $ state {
+            generationStateMaybeLexerInformation = Just lexerInformation
+          }
 
 
 processTokensDeclaration :: Generation ()
@@ -179,3 +216,10 @@ englishList (a:b:[]) = a ++ " and " ++ b
 englishList items = (intercalate ", " $ reverse $ drop 1 $ reverse items)
                     ++ ", and "
                     ++ (head $ reverse items)
+
+
+getUniqueID :: Generation UniqueID
+getUniqueID = do
+  state@(GenerationState { generationStateUniqueIDCounter = uniqueID }) <- get
+  put $ state { generationStateUniqueIDCounter = uniqueID + 1 }
+  return uniqueID
