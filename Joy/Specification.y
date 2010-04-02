@@ -120,13 +120,13 @@ MaybeName :: { Maybe ClientExpression }
         (ClientCode _ body) -> Just $ ClientExpression body }
 
 
-LexerDefinitionList :: { [(String, ClientExpression)] }
+LexerDefinitionList :: { [(LineNumber, String, ClientExpression)] }
     :
     { [] }
     | LexerDefinitionList '|' string clientCode
     { case ($3, $4) of
-        (StringLiteral _ string, ClientCode _ body)
-          -> $1 ++ [(string, ClientExpression body)] }
+        (StringLiteral lineNumber string, ClientCode _ body)
+          -> $1 ++ [(lineNumber, string, ClientExpression body)] }
 
 
 TokenDefinitionList :: { [(GrammarSymbol, String)] }

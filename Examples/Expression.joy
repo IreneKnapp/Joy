@@ -13,8 +13,8 @@ LEXER
 | '-'	        { Minus }
 | '*'	        { Star }
 | '/'	        { Slash }
-| '('	        { LeftParenthesis }
-| ')'	        { RightParenthesis }
+| '\('	        { LeftParenthesis }
+| '\)'	        { RightParenthesis }
 
 TOKEN TYPE { Token } NAMES
 | integer       { Integer $$ }

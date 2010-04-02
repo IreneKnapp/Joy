@@ -4,22 +4,30 @@ module Main (main)
 import Control.Monad.Error
 import Control.Monad.State
 import Data.List
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Maybe
+import Data.Set (Set)
+import qualified Data.Set as Set
 import System.Environment
 import System.Exit
 import System.IO
 
-import Joy.Types
+import Joy.Automata
+import Joy.EnumSets as EnumSets
+import Joy.Regexps
 import Joy.Specification
+import Joy.Types
 
 
 mkGenerationState :: Specification -> GenerationState
 mkGenerationState specification
     = GenerationState {
-        generationStateUniqueIDCounter = 1,
         generationStateSpecification = specification,
         generationStateMaybeMonadType = Nothing,
         generationStateMaybeLexerInformation = Nothing,
         generationStateMaybeErrorFunction = Nothing,
+        generationStateCompiledLexers = [],
         generationStateTerminals = [],
         generationStateNonterminals = [],
         generationStateProductions = []
@@ -37,11 +45,11 @@ main = do
     Left error -> putStrLn $ show error
     Right specification -> do
       let state = mkGenerationState specification
-      (state, result) <- evalStateT (do
-                                      result <- runErrorT generate
-                                      state <- get
-                                      return (state, result))
-                                    state
+      (state, result) <- runUniqueT $ evalStateT (do
+                                                   result <- runErrorT generate
+                                                   state <- get
+                                                   return (state, result))
+                                                 state
       case result of
         Left error -> putStrLn $ show error
         Right () -> return ()
@@ -56,16 +64,20 @@ usage = do
 
 debugSpecification :: Generation ()
 debugSpecification = do
+  {-
   let visitDeclaration (declaration:rest) = do
         liftIO $ putStrLn $ show declaration
         visitDeclaration rest
       visitDeclaration [] = return ()
   GenerationState { generationStateSpecification = specification } <- get
   visitDeclaration $ specificationDeclarations specification
+  -}
+  return ()
 
 
 debugEarlyGenerationState :: Generation ()
 debugEarlyGenerationState = do
+  {-
   state <- get
   liftIO $ do
     putStrLn $ "Monad type: "
@@ -80,6 +92,8 @@ debugEarlyGenerationState = do
                ++ (show $ generationStateNonterminals state)
     putStrLn $ "Productions: "
                ++ (show $ generationStateProductions state)
+   -}
+  return ()
 
 
 generate :: Generation ()
@@ -209,6 +223,64 @@ processNonterminalDeclarations = do
   return ()
 
 
+compileLexers :: Generation ()
+compileLexers = do
+  GenerationState { generationStateMaybeLexerInformation = maybeInformation } <- get
+  compiledLexers <- mapM compileLexer
+                         $ map snd
+                         $ lexerInformationNonuserNamesAndDefinitions
+                         $ fromJust maybeInformation
+  {-
+  state <- get
+  put $ state { generationStateCompiledLexers = compiledLexers }
+  -}
+  return ()
+
+
+compileLexer :: [(LineNumber, String, ClientExpression)] -> Generation ()
+compileLexer regexpStringResultPairs = do
+  regexps <- mapM (\(lineNumber, regexpString, _) -> do
+                     let eitherErrorRegexp = parseRegexp regexpString
+                     case eitherErrorRegexp of
+                       Left message -> fail $ message
+                                              ++ " at line "
+                                              ++ (show lineNumber)
+                                              ++ "."
+                       Right regexp -> return regexp)
+                  regexpStringResultPairs
+  nfas <- mapM (\(regexp, result) -> regexpToNFA regexp result)
+               $ zip regexps (map (\(_, _, result) -> result) regexpStringResultPairs)
+  liftIO $ mapM_ (\nfa -> do
+                   putStrLn ""
+                   mapM_ (\state -> do
+                           let datum = case automatonData nfa state of
+                                         Nothing -> "Nothing"
+                                         Just (ClientExpression string)
+                                             -> "Just {" ++ string ++ "}"
+                               accepting = automatonAccepting nfa state
+                               transitionMap = automatonTransitionMap nfa state
+                           putStrLn $ (if accepting then "*" else "")
+                                      ++ (show state) ++ " " ++ datum
+                           mapM_ (\input -> do
+                                    let resultStates
+                                            = fromJust $ Map.lookup input transitionMap
+                                    putStr "  "
+                                    mapM_ (\(start, end) -> do
+                                             if start == end
+                                               then putStr $ [start]
+                                               else putStr $ [start] ++ "-" ++ [end])
+                                          $ EnumSets.toList input
+                                    putStr " ->"
+                                    mapM_ (\resultState -> do
+                                             putStr $ " " ++ (show resultState))
+                                          $ Set.toList resultStates
+                                    putStrLn "")
+                                 $ Map.keys transitionMap)
+                         $ automatonStates nfa)
+                 nfas
+  return ()
+
+
 englishList :: [String] -> String
 englishList [] = ""
 englishList [item] = item
@@ -216,10 +288,3 @@ englishList (a:b:[]) = a ++ " and " ++ b
 englishList items = (intercalate ", " $ reverse $ drop 1 $ reverse items)
                     ++ ", and "
                     ++ (head $ reverse items)
-
-
-getUniqueID :: Generation UniqueID
-getUniqueID = do
-  state@(GenerationState { generationStateUniqueIDCounter = uniqueID }) <- get
-  put $ state { generationStateUniqueIDCounter = uniqueID + 1 }
-  return uniqueID

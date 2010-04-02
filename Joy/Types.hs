@@ -1,6 +1,5 @@
 module Joy.Types (
                   LineNumber(..),
-                  UniqueID(..),
                   Located(..),
                   Specification(..),
                   JoyVersion(..),
@@ -12,11 +11,34 @@ module Joy.Types (
                   ClientExpression(..),
                   ClientAction(..),
                   SpecificationParseError(..),
+                  
+                  -- Automata
+                  Automaton(..),
+                  DFA,
+                  NFA,
+                  
+                  -- EnumSets
                   EnumSet,
-                  DFA(..),
-                  DFAState(..),
-                  NFA(..),
-                  NFAState(..),
+                  enumInSet,
+                  emptyEnumSet,
+                  fullEnumSet,
+                  inverseEnumSet,
+                  rangeEnumSet,
+                  enumerationEnumSet,
+                  negativeEnumerationEnumSet,
+                  unionEnumSet,
+                  differenceEnumSet,
+                  relevantSubsetsForEnumSets,
+                  anyEnumInSet,
+                  toList,
+                  fromList,
+                  
+                  -- Uniqueness
+                  UniqueID,
+                  MonadUnique(..),
+                  UniqueT,
+                  runUniqueT,
+                  
                   Generation(..),
                   GenerationError(..),
                   GenerationState(..),
@@ -30,13 +52,12 @@ import Data.Map (Map)
 import Data.Set (Set)
 import Data.Word
 
+import Joy.Automata
 import Joy.EnumSets
+import Joy.Uniqueness
 
 
 type LineNumber = Word64
-
-
-type UniqueID = Word64
 
 
 class Located a where
@@ -64,7 +85,7 @@ data Declaration = MonadDeclaration LineNumber ClientType
                  | LexerDeclaration LineNumber
                                     Bool
                                     (Maybe ClientExpression)
-                                    [(String, ClientExpression)]
+                                    [(LineNumber, String, ClientExpression)]
                  | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
                  | NonterminalDeclaration {
                      nonterminalDeclarationLineNumber
@@ -125,31 +146,7 @@ instance Show SpecificationParseError where
           ++ (specificationParseErrorMessage error)
 
 
-data DFA input data' = DFA (Map UniqueID (DFAState input data'))
-                           (DFAState input data')
-
-
-data DFAState input data' = DFAState {
-      dfaStateID :: UniqueID,
-      dfaStateAccepting :: Bool,
-      dfaStateSuccessors :: Map input UniqueID,
-      dfaStateData :: data'
-    }
-
-
-data NFA input data' = NFA (Map UniqueID (NFAState input data'))
-                           (Set (NFAState input data'))
-
-
-data NFAState input data' = NFAState {
-      nfaStateID :: UniqueID,
-      nfaStateAccepting :: Bool,
-      nfaStateSuccessors :: Map input (Set UniqueID),
-      nfaStateData :: data'
-    }
-
-
-type Generation = ErrorT GenerationError (StateT GenerationState IO)
+type Generation = ErrorT GenerationError (StateT GenerationState (UniqueT IO))
 
 
 data GenerationError = GenerationError String
@@ -160,12 +157,11 @@ instance Show GenerationError where
 
 
 data GenerationState = GenerationState {
-        generationStateUniqueIDCounter :: UniqueID,
         generationStateSpecification :: Specification,
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
-        generationStateCompiledLexers :: [(String, DFA Char ())],
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
+        generationStateCompiledLexers :: [(String, DFA Char ())],
         generationStateTerminals :: [GrammarSymbol],
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions
@@ -177,5 +173,5 @@ data LexerInformation = LexerInformation {
         lexerInformationMaybeInitialName :: Maybe ClientExpression,
         lexerInformationUserNames :: [ClientExpression],
         lexerInformationNonuserNamesAndDefinitions
-            :: [(ClientExpression, [(String, ClientExpression)])]
+            :: [(ClientExpression, [(LineNumber, String, ClientExpression)])]
     }

@@ -1,16 +1,18 @@
-{-# LANGUAGE ExistentialQuantification #-}
 module Joy.EnumSets (
                      EnumSet,
                      enumInSet,
                      emptyEnumSet,
                      fullEnumSet,
+                     inverseEnumSet,
                      rangeEnumSet,
                      enumerationEnumSet,
                      negativeEnumerationEnumSet,
                      unionEnumSet,
                      differenceEnumSet,
                      relevantSubsetsForEnumSets,
-                     anyEnumInSet
+                     anyEnumInSet,
+                     toList,
+                     fromList
                     )
     where
 
@@ -18,61 +20,100 @@ import Data.List
 import Data.Maybe
 
 
-data EnumSet content
-    = (Ord content, Bounded content, Enum content)
-      => EnumSet [(content, content)]
+data (Ord content, Bounded content, Enum content) => EnumSet content
+    = EnumSet [(content, content)]
 
 
-enumInSet :: (EnumSet content) -> content -> Bool
+instance (Ord content, Bounded content, Enum content) => Ord (EnumSet content) where
+    compare (EnumSet rangesA) (EnumSet rangesB) = compare rangesA rangesB
+
+
+enumInSet
+    :: (Ord content, Bounded content, Enum content)
+    => (EnumSet content)
+    -> content
+    -> Bool
 enumInSet (EnumSet ranges) enum
     = let enumInRange (start, end) =
               (fromEnum start <= fromEnum enum) && (fromEnum enum <= fromEnum end)
       in any enumInRange ranges
 
 
-emptyEnumSet :: (Ord content, Bounded content, Enum content)
-                => EnumSet content
+emptyEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => EnumSet content
 emptyEnumSet = EnumSet []
 
 
-fullEnumSet :: (Ord content, Bounded content, Enum content)
-               => EnumSet content
+fullEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => EnumSet content
 fullEnumSet = EnumSet [(minBound, maxBound)]
 
 
-rangeEnumSet :: (Ord content, Bounded content, Enum content)
-                => content -> content -> EnumSet content
+inverseEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => EnumSet content
+    -> EnumSet content
+inverseEnumSet enumSet = differenceEnumSet fullEnumSet enumSet
+
+
+rangeEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => content
+    -> content
+    -> EnumSet content
 rangeEnumSet start end = EnumSet [(start, end)]
 
 
-enumerationEnumSet :: (Ord content, Bounded content, Enum content)
-                      => [content] -> EnumSet content
+enumerationEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => [content]
+    -> EnumSet content
 enumerationEnumSet enums
     = foldl addEnumToSet emptyEnumSet enums
 
 
-negativeEnumerationEnumSet :: (Ord content, Bounded content, Enum content)
-                              => [content] -> EnumSet content
+negativeEnumerationEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => [content]
+    -> EnumSet content
 negativeEnumerationEnumSet enums
     = foldl removeEnumFromSet fullEnumSet enums
 
 
-unionEnumSet :: (EnumSet content) -> (EnumSet content) -> (EnumSet content)
+unionEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => (EnumSet content)
+    -> (EnumSet content)
+    -> (EnumSet content)
 unionEnumSet (EnumSet rangesA) (EnumSet rangesB)
     = EnumSet $ unionRangeSets rangesA rangesB
 
 
-differenceEnumSet :: (EnumSet content) -> (EnumSet content) -> (EnumSet content)
+differenceEnumSet
+    :: (Ord content, Bounded content, Enum content)
+    => (EnumSet content)
+    -> (EnumSet content)
+    -> (EnumSet content)
 differenceEnumSet (EnumSet rangesA) (EnumSet rangesB)
     = EnumSet $ subtractRangeSets rangesA rangesB
 
 
-addEnumToSet :: (EnumSet content) -> content -> (EnumSet content)
+addEnumToSet
+    :: (Ord content, Bounded content, Enum content)
+    => (EnumSet content)
+    -> content
+    -> (EnumSet content)
 addEnumToSet (EnumSet ranges) enum
     = EnumSet $ unionRangeSets ranges [(enum, enum)]
 
 
-removeEnumFromSet :: (EnumSet content) -> content -> (EnumSet content)
+removeEnumFromSet
+    :: (Ord content, Bounded content, Enum content)
+    => (EnumSet content)
+    -> content
+    -> (EnumSet content)
 removeEnumFromSet (EnumSet ranges) enum
     = EnumSet $ subtractRangeSets ranges [(enum, enum)]
 
@@ -369,11 +410,29 @@ relevantSubsetsForEnumSets sets =
            $ zip allBoundariesEvenIndices allBoundariesOddIndices
 
 
-anyEnumInSet :: EnumSet content -> Maybe content
+anyEnumInSet
+    :: (Ord content, Bounded content, Enum content)
+    => EnumSet content
+    -> Maybe content
 anyEnumInSet (EnumSet ((result, _):_)) = Just result
 anyEnumInSet _ = Nothing
 
 
-instance Eq (EnumSet content) where
+toList
+    :: (Ord content, Bounded content, Enum content)
+    => EnumSet content
+    -> [(content, content)]
+toList (EnumSet ranges) = ranges
+
+
+
+fromList
+    :: (Ord content, Bounded content, Enum content)
+    => [(content, content)]
+    -> EnumSet content
+fromList ranges = EnumSet ranges
+
+
+instance (Ord content, Bounded content, Enum content) => Eq (EnumSet content) where
     (EnumSet aRanges) == (EnumSet bRanges)
         = aRanges == bRanges
