@@ -161,7 +161,8 @@ data GenerationState = GenerationState {
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
-        generationStateCompiledLexers :: [(String, DFA Char ())],
+        generationStateCompiledLexers
+            :: [(String, DFA Char (Maybe ClientExpression) ())],
         generationStateTerminals :: [GrammarSymbol],
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions

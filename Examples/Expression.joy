@@ -11,7 +11,7 @@ LEXER
 | '[0-9]+'      { Integer $ read $0 }
 | '\+'          { Plus }
 | '-'	        { Minus }
-| '*'	        { Star }
+| '\*'	        { Star }
 | '/'	        { Slash }
 | '\('	        { LeftParenthesis }
 | '\)'	        { RightParenthesis }

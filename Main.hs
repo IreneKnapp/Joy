@@ -238,7 +238,7 @@ compileLexers = do
 
 
 compileLexer :: [(LineNumber, String, ClientExpression)] -> Generation ()
-compileLexer regexpStringResultPairs = do
+compileLexer regexpStringResultTuples = do
   regexps <- mapM (\(lineNumber, regexpString, _) -> do
                      let eitherErrorRegexp = parseRegexp regexpString
                      case eitherErrorRegexp of
@@ -247,17 +247,18 @@ compileLexer regexpStringResultPairs = do
                                               ++ (show lineNumber)
                                               ++ "."
                        Right regexp -> return regexp)
-                  regexpStringResultPairs
+                  regexpStringResultTuples
   nfas <- mapM (\(regexp, result) -> regexpToNFA regexp result)
-               $ zip regexps (map (\(_, _, result) -> result) regexpStringResultPairs)
-  liftIO $ mapM_ (\nfa -> do
+               $ zip regexps (map (\(_, _, result) -> result) regexpStringResultTuples)
+  liftIO $ mapM_ (\(nfa, regexpString) -> do
                    putStrLn ""
+                   putStrLn $ (show regexpString)
                    mapM_ (\state -> do
-                           let datum = case automatonData nfa state of
+                           let datum = case automatonStateData nfa state of
                                          Nothing -> "Nothing"
                                          Just (ClientExpression string)
                                              -> "Just {" ++ string ++ "}"
-                               accepting = automatonAccepting nfa state
+                               accepting = automatonStateAccepting nfa state
                                transitionMap = automatonTransitionMap nfa state
                            putStrLn $ (if accepting then "*" else "")
                                       ++ (show state) ++ " " ++ datum
@@ -273,11 +274,11 @@ compileLexer regexpStringResultPairs = do
                                     putStr " ->"
                                     mapM_ (\resultState -> do
                                              putStr $ " " ++ (show resultState))
-                                          $ Set.toList resultStates
+                                          $ map fst resultStates
                                     putStrLn "")
                                  $ Map.keys transitionMap)
                          $ automatonStates nfa)
-                 nfas
+                 $ zip nfas $ map (\(_, a, _) -> a) regexpStringResultTuples
   return ()
 
 

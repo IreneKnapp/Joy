@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Joy.Regexps (
                     Regexp,
                     parseRegexp,
@@ -44,122 +45,175 @@ instance Error RegexpParseError where
 type RegexpParse = ErrorT RegexpParseError Identity
 
 
+data (Ord content, Bounded content, Enum content) => RegexpChar content
+    = Normal content | Special Char deriving (Show)
+
+
 parseRegexp
-    :: (Ord content, Bounded content, Enum content)
+    :: forall content . (Ord content, Bounded content, Enum content)
     => String
     -> Either String (Regexp content)
 parseRegexp input =
-    let parseRegexp' :: (Ord content, Bounded content, Enum content)
-                     => Int
-                     -> String
-                     -> RegexpParse (Maybe (Regexp content), String)
-        parseRegexp' 0 "" = return (Nothing, "")
-        parseRegexp' depth "" = fail $ "Unbalanced '(' in regexp"
-        parseRegexp' depth ('\\':'\\':rest) = catR (mkSingletonRegexp $ fromChar '\\')
-                                                   $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'n':rest) = catR (mkSingletonRegexp $ fromChar '\n')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'r':rest) = catR (mkSingletonRegexp $ fromChar '\r')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'f':rest) = catR (mkSingletonRegexp $ fromChar '\f')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'t':rest) = catR (mkSingletonRegexp $ fromChar '\t')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'v':rest) = catR (mkSingletonRegexp $ fromChar '\v')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'+':rest) = catR (mkSingletonRegexp $ fromChar '+')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'*':rest) = catR (mkSingletonRegexp $ fromChar '*')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'(':rest) = catR (mkSingletonRegexp $ fromChar '(')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':')':rest) = catR (mkSingletonRegexp $ fromChar '(')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'[':rest) = catR (mkSingletonRegexp $ fromChar '[')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':']':rest) = catR (mkSingletonRegexp $ fromChar ']')
-                                                  $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'x':rest) | validHexEscape 2 rest
-            = let (content, rest) = readHexEscape 2 rest
-              in catR (mkSingletonRegexp content) $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'u':rest) | validHexEscape 4 rest
-            = let (content, rest) = readHexEscape 4 rest
-              in catR (mkSingletonRegexp content) $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':'U':rest) | validHexEscape 8 rest
-            = let (content, rest) = readHexEscape 8 rest
-              in catR (mkSingletonRegexp content) $ parseRegexp' depth rest
-        parseRegexp' depth ('\\':rest) = fail $ "Invalid '\\' escape in regexp"
-        parseRegexp' depth ('[':'^':rest) = do
+    let parseRegexp' :: Int
+                     -> [Regexp content]
+                     -> [RegexpChar content]
+                     -> RegexpParse ([Regexp content], [RegexpChar content])
+        parseRegexp' 0 accumulator [] = return (reverse accumulator, [])
+        parseRegexp' depth _ [] = fail $ "Unbalanced '(' in regexp"
+        parseRegexp' depth accumulator (Special '[':Special '^':rest) = do
           (enumSet, rest) <- parseEnumSet emptyEnumSet rest
-          catR (mkEnumSetRegexp $ inverseEnumSet enumSet)
-               $ parseRegexp' depth rest
-        parseRegexp' depth ('[':rest) = do
+          let accumulator' = (mkEnumSetRegexp $ inverseEnumSet enumSet) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth accumulator (Special '[':rest) = do
           (enumSet, rest) <- parseEnumSet emptyEnumSet rest
-          catR (mkEnumSetRegexp enumSet)
-               $ parseRegexp' depth rest
-        parseRegexp' depth (']':rest) = fail $ "Unbalanced ']' in regexp"
-        parseRegexp' depth ('(':rest) = do
-          recursiveResult <- parseRegexp' (depth+1) rest
-          case recursiveResult of
-            (Nothing, rest) -> return (Just $ Grouped (Sequence []), rest)
-            (Just regexp, rest) -> return (Just $ Grouped regexp, rest)
-        parseRegexp' 0 (')':rest) = fail $ "Unbalanced ')' in regexp"
-        parseRegexp' depth (')':rest) = return (Nothing, rest)
-        parseRegexp' depth (c:rest) = catR (mkSingletonRegexp $ fromChar c)
-                                           $ parseRegexp' depth rest
+          let accumulator' = (mkEnumSetRegexp enumSet) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth _ (Special ']':_)
+            = fail $ "Unbalanced ']' in regexp"
+        parseRegexp' depth accumulator (Special '(':rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (Grouped $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' 0 _ (Special ')':_)
+            = fail $ "Unbalanced ')' in regexp"
+        parseRegexp' depth accumulator (Special ')':rest)
+            = return (reverse accumulator, rest)
+        parseRegexp' depth accumulator (Normal c:rest) = do
+          let accumulator' = (mkSingletonRegexp c) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth (mostRecent:older) (Special '?':rest) = do
+          if isRepetition mostRecent
+            then fail $ "Exponential complexity in regexp"
+            else do
+              let accumulator' = (mkZeroOrOneRegexp mostRecent) : older
+              parseRegexp' depth accumulator' rest
+        parseRegexp' depth (mostRecent:older) (Special '*':rest) = do
+          if isRepetition mostRecent
+            then fail $ "Exponential complexity in regexp"
+            else do
+              let accumulator' = (mkZeroOrMoreRegexp mostRecent) : older
+              parseRegexp' depth accumulator' rest
+        parseRegexp' depth (mostRecent:older) (Special '+':rest) = do
+          if isRepetition mostRecent
+            then fail $ "Exponential complexity in regexp"
+            else do
+              let accumulator' = (mkOneOrMoreRegexp mostRecent) : older
+              parseRegexp' depth accumulator' rest
+        parseRegexp' depth [] (Special '?':rest) = fail $ "Nothing before '?' in regexp"
+        parseRegexp' depth [] (Special '*':rest) = fail $ "Nothing before '*' in regexp"
+        parseRegexp' depth [] (Special '+':rest) = fail $ "Nothing before '+' in regexp"
         
-        catR :: (Ord content, Bounded content, Enum content)
-             => (Regexp content)
-             -> RegexpParse (Maybe (Regexp content), String)
-             -> RegexpParse (Maybe (Regexp content), String)
-        catR regexpA action = do
-          actionResult <- action
-          case actionResult of
-            (Nothing, rest) -> return (Just regexpA, rest)
-            (Just regexpB, rest)
-                -> return (Just $ mkSequenceRegexp [regexpA, regexpB], rest)
+        isRepetition :: (Regexp content) -> Bool
+        isRepetition (ZeroOrOne _) = True
+        isRepetition (ZeroOrMore _) = True
+        isRepetition (OneOrMore _) = True
+        isRepetition (Grouped child) = isRepetition child
+        isRepetition _ = False
         
-        parseEnumSet :: (Ord content, Bounded content, Enum content)
-                     => (EnumSet content)
-                     -> String
-                     -> RegexpParse (EnumSet content, String)
-        parseEnumSet enumSet (start:'-':end:rest)
-            = parseEnumSet (unionEnumSet enumSet
-                                         $ rangeEnumSet (fromChar start)
-                                                        (fromChar end))
+        parseEnumSet :: (EnumSet content)
+                     -> [RegexpChar content]
+                     -> RegexpParse (EnumSet content, [RegexpChar content])
+        parseEnumSet enumSet (Normal start:Special '-':Normal end:rest)
+            = parseEnumSet (unionEnumSet enumSet $ rangeEnumSet start end)
                            rest
-        parseEnumSet enumSet ('\\':'-':rest)
-            = parseEnumSet (unionEnumSet enumSet $ enumerationEnumSet [fromChar '-'])
-                           rest
-        parseEnumSet enumSet ('[':rest)
-            = fail $ "Invalid character '[' in character set in regexp"
-        parseEnumSet enumSet ('-':rest)
+        parseEnumSet enumSet (Special '-':rest)
             = fail $ "Invalid character '-' in character set in regexp"
-        parseEnumSet enumSet (']':rest) = return (enumSet, rest)
-        parseEnumSet enumSet (c:rest)
-            = parseEnumSet (unionEnumSet enumSet $ enumerationEnumSet [fromChar c])
+        parseEnumSet enumSet (Special ']':rest) = return (enumSet, rest)
+        parseEnumSet enumSet (Normal c:rest)
+            = parseEnumSet (unionEnumSet enumSet $ enumerationEnumSet [c])
                            rest
         
-        fromChar :: (Ord content, Bounded content, Enum content)
-                 => Char
-                 -> content
+        fromChar :: Char -> content
         fromChar character = toEnum $ fromEnum character
         
         validHexEscape :: Int -> String -> Bool
         validHexEscape length input = all isHexDigit $ take length input
         
-        readHexEscape :: (Ord content, Bounded content, Enum content)
-                      => Int -> String -> (content, String)
-        readHexEscape length input = (toEnum $ fst $ head $ readHex $ take length input,
-                                      drop length input)
+        readHexEscape :: Int -> String -> RegexpParse (content, String)
+        readHexEscape length input =
+            let value = fst $ head $ readHex $ take length input :: Integer
+                rest = drop length input
+            in if value > (fromIntegral $ fromEnum (maxBound :: content))
+              then fail "Hex value out of range"
+              else return (toEnum $ fromIntegral value, rest)
         
-        parseAll :: (Ord content, Bounded content, Enum content)
-                 => RegexpParse (Regexp content)
+        scanRegexpChar
+            :: Bool
+            -> String
+            -> RegexpParse ([RegexpChar content], Bool, String)
+        scanRegexpChar inSet ('\\':'\\':rest)
+            = return ([Normal $ fromChar '\\'], inSet, rest)
+        scanRegexpChar False ('\\':'n':rest)
+            = return ([Normal $ fromChar '\n'], False, rest)
+        scanRegexpChar False ('\\':'r':rest)
+            = return ([Normal $ fromChar '\r'], False, rest)
+        scanRegexpChar False ('\\':'f':rest)
+            = return ([Normal $ fromChar '\f'], False, rest)
+        scanRegexpChar False ('\\':'t':rest)
+            = return ([Normal $ fromChar '\t'], False, rest)
+        scanRegexpChar False ('\\':'v':rest)
+            = return ([Normal $ fromChar '\v'], False, rest)
+        scanRegexpChar False ('\\':'+':rest)
+            = return ([Normal $ fromChar '+'], False, rest)
+        scanRegexpChar False ('\\':'*':rest)
+            = return ([Normal $ fromChar '*'], False, rest)
+        scanRegexpChar False ('\\':'?':rest)
+            = return ([Normal $ fromChar '?'], False, rest)
+        scanRegexpChar False ('\\':'(':rest)
+            = return ([Normal $ fromChar '('], False, rest)
+        scanRegexpChar False ('\\':')':rest)
+            = return ([Normal $ fromChar ')'], False, rest)
+        scanRegexpChar True ('\\':'-':rest)
+            = return ([Normal $ fromChar '-'], True, rest)
+        scanRegexpChar inSet ('\\':'[':rest)
+            = return ([Normal $ fromChar '['], inSet, rest)
+        scanRegexpChar inSet ('\\':']':rest)
+            = return ([Normal $ fromChar ']'], inSet, rest)
+        scanRegexpChar inSet ('\\':'x':rest) | validHexEscape 2 rest = do
+          (content, rest) <- readHexEscape 2 rest
+          return ([Normal content], inSet, rest)
+        scanRegexpChar inSet ('\\':'u':rest) | validHexEscape 4 rest = do
+          (content, rest) <- readHexEscape 4 rest
+          return ([Normal content], inSet, rest)
+        scanRegexpChar inSet ('\\':'U':rest) | validHexEscape 8 rest = do
+          (content, rest) <- readHexEscape 8 rest
+          return ([Normal content], inSet, rest)
+        scanRegexpChar _ ('\\':_) = fail $ "Invalid '\\' escape in regexp"
+        scanRegexpChar False ('+':rest)
+            = return ([Special '+'], False, rest)
+        scanRegexpChar False ('*':rest)
+            = return ([Special '*'], False, rest)
+        scanRegexpChar False ('?':rest)
+            = return ([Special '?'], False, rest)
+        scanRegexpChar False ('[':'^':rest)
+            = return ([Special '[', Special '^'], True, rest)
+        scanRegexpChar False ('[':rest)
+            = return ([Special '['], True, rest)
+        scanRegexpChar False (']':rest)
+            = fail $ "Unbalanced ']' in regexp"
+        scanRegexpChar True ('[':rest)
+            = fail $ "Invalid character '[' in character set in regexp"
+        scanRegexpChar True (']':rest)
+            = return ([Special ']'], False, rest)
+        scanRegexpChar True ('-':rest)
+            = return ([Special '-'], True, rest)
+        scanRegexpChar inSet (c:rest) = return ([Normal $ fromChar c], inSet, rest)
+        
+        scanRegexpChars :: Bool -> String -> RegexpParse [RegexpChar content]
+        scanRegexpChars False "" = return []
+        scanRegexpChars True "" = fail $ "Unbalanced '[' in regexp"
+        scanRegexpChars inSet input = do
+          (outputHere, inSet, rest) <- scanRegexpChar inSet input
+          outputRest <- scanRegexpChars inSet rest
+          return $ outputHere ++ outputRest
+        
+        parseAll :: RegexpParse (Regexp content)
         parseAll = do
-          result <- parseRegexp' 0 input
+          regexpString <- scanRegexpChars False input
+          (result, _) <- parseRegexp' 0 [] regexpString
           case result of
-            (Nothing, _) -> fail "Empty regexp"
-            (Just regexp, _) -> return regexp
+            [] -> fail "Empty regexp"
+            _ -> return $ mkSequenceRegexp result
     in case runIdentity $ runErrorT parseAll of
          Left (RegexpParseError message) -> Left message
          Right result -> Right result
@@ -224,19 +278,20 @@ mkOneOrMoreRegexp regexp = OneOrMore regexp
 regexpToNFA
     :: (MonadUnique m, Ord content, Bounded content, Enum content)
     => (Regexp content)
-    -> data'
-    -> m (NFA (EnumSet content) (Maybe data'))
+    -> stateData
+    -> m (NFA (EnumSet content) (Maybe stateData) ())
 regexpToNFA regexp datum = do
     let regexpToNFA' :: (MonadUnique m, Ord content, Bounded content, Enum content)
-                     => (NFA (EnumSet content) (Maybe data'), [UniqueID])
+                     => (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
                      -> (Regexp content)
-                     -> m (NFA (EnumSet content) (Maybe data'), [UniqueID])
+                     -> m (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
         regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) = do
           (nfa, newState) <- automatonAddState nfa Nothing
           let nfa' = foldl (\nfa tailState -> automatonAddTransition nfa
                                                                      tailState
                                                                      newState
-                                                                     enumSet)
+                                                                     enumSet
+                                                                     ())
                            nfa
                            tailStates
           return (nfa', [newState])
@@ -265,9 +320,10 @@ regexpToNFA regexp datum = do
                                              automatonAddTransition nfa
                                                                     tailState
                                                                     resultingState
-                                                                    enumSet)
+                                                                    enumSet
+                                                                    ())
                                            nfa
-                                           $ Set.toList resultingStates)
+                                           $ map fst resultingStates)
                                    nfa
                                    newTailStates)
                            nfa
@@ -285,9 +341,10 @@ regexpToNFA regexp datum = do
                                              automatonAddTransition nfa
                                                                     tailState
                                                                     resultingState
-                                                                    enumSet)
+                                                                    enumSet
+                                                                    ())
                                            nfa
-                                           $ Set.toList resultingStates)
+                                           $ map fst resultingStates)
                                    nfa
                                    newTailStates)
                            nfa
@@ -297,8 +354,8 @@ regexpToNFA regexp datum = do
     (fullNFA, fullNFATailStates) <- regexpToNFA' (emptyNFA, automatonStates emptyNFA)
                                                  regexp
     fullNFA <- foldlM (\nfa tailState -> do
-                        let nfa' = automatonSetAccepting nfa tailState True
-                            nfa'' = automatonSetData nfa' tailState $ Just datum
+                        let nfa' = automatonSetStateAccepting nfa tailState True
+                            nfa'' = automatonSetStateData nfa' tailState $ Just datum
                         return nfa'')
                       fullNFA
                       fullNFATailStates
