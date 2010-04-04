@@ -1,18 +1,28 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FunctionalDependencies,
+             ScopedTypeVariables #-}
 module Joy.Automata (
                      Automaton(..),
                      DFA,
+                     dfaStartState,
                      NFA,
+                     nfaStartSet,
+                     combineNFAs,
+                     nfaToDFA
                     )
     where
 
+import Control.Monad.Error
+import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Joy.EnumSets
 import Joy.Uniqueness
+
+import Debug.Trace
 
 
 class (Ord input) => Automaton fa input stateData transitionData
@@ -23,6 +33,7 @@ class (Ord input) => Automaton fa input stateData transitionData
         :: fa -> UniqueID -> UniqueID -> input -> transitionData -> fa
     automatonTransitionMap
         :: fa -> UniqueID -> Map input [(UniqueID, transitionData)]
+    automatonStateStarting :: fa -> UniqueID -> Bool
     automatonStateAccepting :: fa -> UniqueID -> Bool
     automatonSetStateAccepting :: fa -> UniqueID -> Bool -> fa
     automatonStateData :: fa -> UniqueID -> stateData
@@ -72,6 +83,8 @@ instance (Ord input) => Automaton (DFA input stateData transitionData)
     automatonTransitionMap (DFA stateMap _) stateID
         = Map.map (\successor -> [successor])
                   $ dfaStateSuccessors $ fromJust $ Map.lookup stateID stateMap
+    automatonStateStarting (DFA _ startID) stateID
+        = startID == stateID
     automatonStateAccepting (DFA stateMap _) stateID
         = dfaStateAccepting $ fromJust $ Map.lookup stateID stateMap
     automatonSetStateAccepting (DFA stateMap startStateID) stateID accepting
@@ -85,6 +98,10 @@ instance (Ord input) => Automaton (DFA input stateData transitionData)
               newState = oldState { dfaStateData = datum }
           in DFA (Map.insert stateID newState stateMap) startStateID
     automatonStates (DFA stateMap _) = Map.keys stateMap
+
+
+dfaStartState :: (DFA input stateData transitionData) -> UniqueID
+dfaStartState (DFA _ startState) = startState
 
 
 data NFA input stateData transitionData
@@ -131,6 +148,8 @@ instance (Ord input) => Automaton (NFA input stateData transitionData)
           in NFA (Map.insert fromStateID newFromState stateMap) startStateID
     automatonTransitionMap (NFA stateMap _) stateID
         = nfaStateSuccessors $ fromJust $ Map.lookup stateID stateMap
+    automatonStateStarting (NFA _ startSet) stateID
+        = Set.member stateID startSet
     automatonStateAccepting (NFA stateMap _) stateID
         = nfaStateAccepting $ fromJust $ Map.lookup stateID stateMap
     automatonSetStateAccepting (NFA stateMap startStateID) stateID accepting
@@ -144,3 +163,111 @@ instance (Ord input) => Automaton (NFA input stateData transitionData)
               newState = oldState { nfaStateData = datum }
           in NFA (Map.insert stateID newState stateMap) startStateID
     automatonStates (NFA stateMap _) = Map.keys stateMap
+
+
+nfaStartSet :: (NFA input stateData transitionData) -> Set UniqueID
+nfaStartSet (NFA _ startSet) = startSet
+
+
+combineNFAs :: [NFA input stateData transitionData] -> NFA input stateData transitionData
+combineNFAs inputs = NFA (Map.unions $ map (\(NFA stateMap _) -> stateMap) inputs)
+                         (Set.unions $ map (\(NFA _ startSet) -> startSet) inputs)
+
+
+data AutomatonConversionError = AutomatonConversionError String
+instance Error AutomatonConversionError where
+    strMsg string = AutomatonConversionError string
+
+
+nfaToDFA :: forall m content stateData transitionData .
+            (MonadUnique m, Ord content, Bounded content, Enum content)
+         => (NFA (EnumSet content) (Maybe stateData) transitionData)
+         -> m (Either String (DFA (EnumSet content) (Maybe stateData) ()))
+nfaToDFA nfa = do
+    let convertQueue :: [Set UniqueID]
+                     -> (DFA (EnumSet content) (Maybe stateData) ())
+                     -> (Map (Set UniqueID) UniqueID)
+                     -> ErrorT AutomatonConversionError m
+                        (DFA (EnumSet content) (Maybe stateData) ())
+        convertQueue [] dfa _ = return dfa
+        convertQueue ((sourceNFAStates):queue) dfa stateSetMap = do
+          trace ((show sourceNFAStates) ++ "\n" ++ (show stateSetMap) ++ "\n") $ return ()
+          let sourceDFAState = fromJust $ Map.lookup sourceNFAStates stateSetMap
+              relevantEnumSets
+                  = relevantSubsetsForEnumSets
+                    $ concat
+                    $ map (\state -> Map.keys $ automatonTransitionMap nfa state)
+                    $ Set.toList
+                    sourceNFAStates
+          (dfa, stateSetMap, queue)
+              <- foldM
+                 (\(dfa, stateSetMap, queue) enumSet -> do
+                   let testInput = fromJust $ anyEnumInSet enumSet
+                       targetNFAStates
+                           = Set.fromList
+                             $ nub
+                             $ concat
+                             $ map
+                               (\sourceNFAState ->
+                                 map fst
+                                 $ fromJust
+                                 $ getTransition nfa sourceNFAState testInput)
+                               $ Set.toList sourceNFAStates
+                   (dfa, targetDFAState)
+                       <- case Map.lookup targetNFAStates stateSetMap of
+                            Just targetDFAState -> return (dfa, targetDFAState)
+                            Nothing -> do
+                              (dfa, targetDFAState) <- automatonAddState dfa
+                                                                         Nothing
+                              dfa <- return $ automatonAddTransition dfa
+                                                                     sourceDFAState
+                                                                     targetDFAState
+                                                                     enumSet
+                                                                     ()
+                              return (dfa, targetDFAState)
+                   stateSetMap <- return $ Map.insert targetNFAStates
+                                                      targetDFAState
+                                                      stateSetMap
+                   queue <- return $ enqueue queue stateSetMap targetNFAStates
+                   return (dfa, stateSetMap, queue))
+                (dfa, stateSetMap, queue)
+                relevantEnumSets
+          convertQueue queue dfa stateSetMap
+        
+        enqueue :: [Set UniqueID]
+                -> (Map (Set UniqueID) UniqueID)
+                -> (Set UniqueID)
+                -> [Set UniqueID]
+        enqueue queue stateSetMap newNFAStateSet =
+            if (elem newNFAStateSet queue)
+               || (isJust $ Map.lookup newNFAStateSet stateSetMap)
+              then queue
+              else queue ++ [newNFAStateSet]
+        
+        getTransition :: (NFA (EnumSet content) (Maybe stateData) transitionData)
+                      -> UniqueID
+                      -> content
+                      -> (Maybe [(UniqueID, transitionData)])
+        getTransition nfa sourceState input =
+          foldl (\maybeCumulativeResult (enumSet, transitionResult) ->
+                  let partialResult = if enumInSet enumSet input
+                                        then transitionResult
+                                        else []
+                  in case maybeCumulativeResult of
+                       Just cumulativeResult -> Just $ cumulativeResult ++ partialResult
+                       Nothing -> Just partialResult)
+                Nothing
+                $ Map.toList $ automatonTransitionMap nfa sourceState
+        
+        convertAll :: ErrorT AutomatonConversionError m
+                      (DFA (EnumSet content) (Maybe stateData) ())
+        convertAll = do
+          dfa <- emptyAutomaton Nothing
+          convertQueue [nfaStartSet nfa]
+                       dfa
+                       $ Map.fromList [(nfaStartSet nfa, dfaStartState dfa)]
+        
+    result <- runErrorT convertAll
+    return $ case result of
+      Left (AutomatonConversionError message) -> Left message
+      Right result -> Right result

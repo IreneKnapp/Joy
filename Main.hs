@@ -250,35 +250,51 @@ compileLexer regexpStringResultTuples = do
                   regexpStringResultTuples
   nfas <- mapM (\(regexp, result) -> regexpToNFA regexp result)
                $ zip regexps (map (\(_, _, result) -> result) regexpStringResultTuples)
-  liftIO $ mapM_ (\(nfa, regexpString) -> do
-                   putStrLn ""
-                   putStrLn $ (show regexpString)
-                   mapM_ (\state -> do
-                           let datum = case automatonStateData nfa state of
-                                         Nothing -> "Nothing"
-                                         Just (ClientExpression string)
-                                             -> "Just {" ++ string ++ "}"
-                               accepting = automatonStateAccepting nfa state
-                               transitionMap = automatonTransitionMap nfa state
-                           putStrLn $ (if accepting then "*" else "")
-                                      ++ (show state) ++ " " ++ datum
-                           mapM_ (\input -> do
-                                    let resultStates
-                                            = fromJust $ Map.lookup input transitionMap
-                                    putStr "  "
-                                    mapM_ (\(start, end) -> do
-                                             if start == end
-                                               then putStr $ [start]
-                                               else putStr $ [start] ++ "-" ++ [end])
-                                          $ EnumSets.toList input
-                                    putStr " ->"
-                                    mapM_ (\resultState -> do
-                                             putStr $ " " ++ (show resultState))
-                                          $ map fst resultStates
-                                    putStrLn "")
-                                 $ Map.keys transitionMap)
-                         $ automatonStates nfa)
-                 $ zip nfas $ map (\(_, a, _) -> a) regexpStringResultTuples
+  let combinedNFA = combineNFAs nfas
+  eitherMessageDFA <- nfaToDFA combinedNFA
+  dfa <- case eitherMessageDFA of
+           Left message -> fail message
+           Right dfa -> return dfa
+  liftIO $ let showAutomaton automaton = do
+               mapM_ (\state -> do
+                       let datum = case automatonStateData automaton state of
+                                     Nothing -> "Nothing"
+                                     Just (ClientExpression string)
+                                         -> "Just {" ++ string ++ "}"
+                           start = automatonStateStarting automaton state
+                           accepting = automatonStateAccepting automaton state
+                           transitionMap = automatonTransitionMap automaton state
+                       putStr $ if start then ">" else ""
+                       putStr $ if accepting then "*" else ""
+                       putStrLn $ (show state) ++ " " ++ datum
+                       mapM_ (\input -> do
+                                let resultStates
+                                        = fromJust $ Map.lookup input transitionMap
+                                putStr "  "
+                                mapM_ (\(start, end) -> do
+                                         if start == end
+                                           then putStr $ [start]
+                                           else putStr $ [start] ++ "-" ++ [end])
+                                      $ EnumSets.toList input
+                                putStr " ->"
+                                mapM_ (\resultState -> do
+                                         putStr $ " " ++ (show resultState))
+                                      $ map fst resultStates
+                                putStrLn "")
+                             $ Map.keys transitionMap)
+                     $ automatonStates automaton
+           in do
+             mapM_ (\(nfa, regexpString) -> do
+                      putStrLn ""
+                      putStrLn $ (show regexpString)
+                      showAutomaton nfa)
+                    $ zip nfas $ map (\(_, a, _) -> a) regexpStringResultTuples
+             putStrLn ""
+             putStrLn "Combined NFA"
+             showAutomaton combinedNFA
+             putStrLn ""
+             putStrLn "DFA"
+             showAutomaton dfa
   return ()
 
 
