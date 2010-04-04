@@ -22,8 +22,6 @@ import qualified Data.Set as Set
 import Joy.EnumSets
 import Joy.Uniqueness
 
-import Debug.Trace
-
 
 class (Ord input) => Automaton fa input stateData transitionData
     | fa -> input, fa -> stateData, fa -> transitionData where
@@ -191,7 +189,6 @@ nfaToDFA nfa = do
                         (DFA (EnumSet content) (Maybe stateData) ())
         convertQueue [] dfa _ = return dfa
         convertQueue ((sourceNFAStates):queue) dfa stateSetMap = do
-          trace ((show sourceNFAStates) ++ "\n" ++ (show stateSetMap) ++ "\n") $ return ()
           let sourceDFAState = fromJust $ Map.lookup sourceNFAStates stateSetMap
               relevantEnumSets
                   = relevantSubsetsForEnumSets
@@ -217,8 +214,26 @@ nfaToDFA nfa = do
                        <- case Map.lookup targetNFAStates stateSetMap of
                             Just targetDFAState -> return (dfa, targetDFAState)
                             Nothing -> do
+                              let possibleActions
+                                    = foldl (\accumulator maybeAction ->
+                                              case maybeAction of
+                                                Nothing -> accumulator
+                                                Just action -> accumulator ++ [action])
+                                            []
+                                            $ map (\state -> automatonStateData nfa state)
+                                                  $ Set.toList targetNFAStates
+                              maybeAction
+                                  <- case possibleActions of
+                                       [] -> return Nothing
+                                       [action] -> return $ Just action
+                                       _ -> fail $ "Conflict in lexer"
+                              let accepting = any (automatonStateAccepting nfa)
+                                                  $ Set.toList targetNFAStates
                               (dfa, targetDFAState) <- automatonAddState dfa
-                                                                         Nothing
+                                                                         maybeAction
+                              dfa <- return $ automatonSetStateAccepting dfa
+                                                                         targetDFAState
+                                                                         accepting
                               dfa <- return $ automatonAddTransition dfa
                                                                      sourceDFAState
                                                                      targetDFAState
