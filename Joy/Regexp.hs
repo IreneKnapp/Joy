@@ -1,17 +1,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Joy.Regexps (
-                    Regexp,
-                    parseRegexp,
-                    mkSingletonRegexp,
-                    mkEnumSetRegexp,
-                    mkStringRegexp,
-                    mkSequenceRegexp,
-                    mkAlternationRegexp,
-                    mkZeroOrOneRegexp,
-                    mkZeroOrMoreRegexp,
-                    mkOneOrMoreRegexp,
-                    regexpToNFA
-                   )
+module Joy.Regexp (
+                   Regexp,
+                   parseRegexp,
+                   mkSingletonRegexp,
+                   mkEnumSetRegexp,
+                   mkStringRegexp,
+                   mkSequenceRegexp,
+                   mkAlternationRegexp,
+                   mkZeroOrOneRegexp,
+                   mkZeroOrMoreRegexp,
+                   mkOneOrMoreRegexp,
+                   regexpToNFA
+                  )
     where
 
 import Control.Monad.Error
@@ -26,7 +26,7 @@ import Numeric
 import Prelude hiding (all, concat, foldl)
 
 import Joy.Automata
-import Joy.EnumSets
+import Joy.EnumSet
 import Joy.Uniqueness
 
 data (Ord content, Bounded content, Enum content) => Regexp content

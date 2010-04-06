@@ -1,19 +1,19 @@
-module Joy.EnumSets (
-                     EnumSet,
-                     enumInSet,
-                     emptyEnumSet,
-                     fullEnumSet,
-                     inverseEnumSet,
-                     rangeEnumSet,
-                     enumerationEnumSet,
-                     negativeEnumerationEnumSet,
-                     unionEnumSet,
-                     differenceEnumSet,
-                     relevantSubsetsForEnumSets,
-                     anyEnumInSet,
-                     toList,
-                     fromList
-                    )
+module Joy.EnumSet (
+                    EnumSet,
+                    enumInSet,
+                    emptyEnumSet,
+                    fullEnumSet,
+                    inverseEnumSet,
+                    rangeEnumSet,
+                    enumerationEnumSet,
+                    negativeEnumerationEnumSet,
+                    unionEnumSet,
+                    differenceEnumSet,
+                    relevantSubsetsForEnumSets,
+                    anyEnumInSet,
+                    toList,
+                    fromList
+                   )
     where
 
 import Data.List

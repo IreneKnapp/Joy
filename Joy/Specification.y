@@ -1,5 +1,11 @@
 {
 module Joy.Specification (
+                          Specification(..),
+                          JoyVersion(..),
+                          ClientLanguage(..),
+                          Declaration(..),
+                          GrammarSymbol(..),
+                          SpecificationParseError(..),
                           readSpecificationFile
                          )
     where
@@ -11,9 +17,8 @@ import Data.List
 import Data.Word
 import System.IO
 
-import Joy.Types
-
-import Debug.Trace
+import Joy.Client
+import Joy.Documentation
 }
 
 %name parseSpecification Specification
@@ -34,6 +39,7 @@ import Debug.Trace
         '::'                  { ColonColon _ }
         '('                   { LeftParenthesis _ }
         ')'                   { RightParenthesis _ }
+        binary                { KeywordBinary _ }
         error_                { KeywordError _ }
         initial               { KeywordInitial _ }
         lexer                 { KeywordLexer _ }
@@ -88,12 +94,14 @@ DeclarationList :: { [Declaration] }
         (KeywordError lineNumber, ClientCode _ body)
           -> $1 ++ [ErrorDeclaration lineNumber $ ClientExpression body] }
     
-    | DeclarationList MaybeInitial lexer MaybeName LexerDefinitionList
-    { case ($2, $3) of
-        ((Nothing, maybeInitial), KeywordLexer lineNumber)
-          -> $1 ++ [LexerDeclaration lineNumber maybeInitial $4 $5]
-        ((Just lineNumber, maybeInitial), _)
-          -> $1 ++ [LexerDeclaration lineNumber maybeInitial $4 $5] }
+    | DeclarationList MaybeInitial MaybeBinary lexer MaybeName LexerDefinitionList
+    { case ($2, $3, $4) of
+        ((Nothing, maybeInitial), (Nothing, maybeBinary), KeywordLexer lineNumber)
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6]
+        ((Nothing, maybeInitial), (Just lineNumber, maybeBinary), _)
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6]
+        ((Just lineNumber, maybeInitial), (_, maybeBinary), _)
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6] }
     
     | DeclarationList token type clientCode names TokenDefinitionList
     { case ($2, $4) of
@@ -110,6 +118,14 @@ MaybeInitial :: { (Maybe LineNumber, Bool) }
     | initial
     { case $1 of
         KeywordInitial lineNumber -> (Just lineNumber, True) }
+
+
+MaybeBinary :: { (Maybe LineNumber, Bool) }
+    :
+    { (Nothing, False) }
+    | binary
+    { case $1 of
+        (KeywordBinary lineNumber) -> (Just lineNumber, True) }
 
 
 MaybeName :: { Maybe ClientExpression }
@@ -232,6 +248,78 @@ IdentifierList :: { [GrammarSymbol] }
 
 {
 
+data Specification = Specification {
+      specificationJoyVersion :: JoyVersion,
+      specificationClientLanguage :: ClientLanguage,
+      specificationDeclarations :: [Declaration],
+      specificationOutputHeader :: ClientRaw,
+      specificationOutputFooter :: ClientRaw
+    }
+
+
+data JoyVersion = JoyVersion1
+
+
+data ClientLanguage = Haskell
+
+
+data Declaration = MonadDeclaration LineNumber ClientType
+                 | ErrorDeclaration LineNumber ClientExpression
+                 | UserLexerDeclaration LineNumber
+                                        Bool
+                                        ClientExpression
+                 | LexerDeclaration LineNumber
+                                    Bool
+                                    Bool
+                                    (Maybe ClientExpression)
+                                    [(LineNumber, String, ClientExpression)]
+                 | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
+                 | NonterminalDeclaration {
+                     nonterminalDeclarationLineNumber
+                         :: LineNumber,
+                     nonterminalDeclarationGrammarSymbol
+                         :: GrammarSymbol,
+                     nonterminalDeclarationType
+                         :: ClientType,
+                     nonterminalDeclarationParsers
+                         :: [(Bool, ClientExpression)],
+                     nonterminalDeclarationRightHandSides
+                         :: [([GrammarSymbol], ClientAction)]
+                   }
+
+
+instance Located Declaration where
+    location (MonadDeclaration result _) = result
+    location (ErrorDeclaration result _) = result
+    location (UserLexerDeclaration result _ _) = result
+    location (LexerDeclaration result _ _ _ _) = result
+    location (TokensDeclaration result _ _) = result
+    location result@(NonterminalDeclaration { })
+        = nonterminalDeclarationLineNumber result
+
+
+data GrammarSymbol = IdentifierTerminal String
+                   | StringTerminal String
+                   | Nonterminal String
+                     deriving (Eq)
+
+
+data SpecificationParseError = SpecificationParseError {
+      specificationParseErrorMessage :: String,
+      specificationParseErrorLineNumber :: LineNumber
+    }
+instance Error SpecificationParseError where
+    strMsg message = SpecificationParseError {
+                            specificationParseErrorMessage = message,
+                            specificationParseErrorLineNumber = 0
+                          }
+instance Show SpecificationParseError where
+    show error
+        = "Line "
+          ++ (show $ specificationParseErrorLineNumber error)
+          ++ " of grammar specification: "
+          ++ (specificationParseErrorMessage error)
+
 
 data ParseState = ParseState {
       parseStateInput :: String,
@@ -256,6 +344,7 @@ data Token = EndOfInput LineNumber
            | ColonColon LineNumber
            | LeftParenthesis LineNumber
            | RightParenthesis LineNumber
+           | KeywordBinary LineNumber
            | KeywordError LineNumber
            | KeywordInitial LineNumber
            | KeywordLexer LineNumber
@@ -280,6 +369,7 @@ instance Located Token where
     location (ColonColon result) = result
     location (LeftParenthesis result) = result
     location (RightParenthesis result) = result
+    location (KeywordBinary result) = result
     location (KeywordError result) = result
     location (KeywordInitial result) = result
     location (KeywordLexer result) = result
@@ -307,6 +397,7 @@ instance Show Token where
     show (ColonColon _) = "'::'"
     show (LeftParenthesis _) = "'('"
     show (RightParenthesis _) = "')'"
+    show (KeywordBinary _) = "BINARY"
     show (KeywordError _) = "ERROR"
     show (KeywordInitial _) = "INITIAL"
     show (KeywordLexer _) = "LEXER"
@@ -457,7 +548,8 @@ lexer all@(c:rest) = do
       then do
         (identifier, rest) <- readIdentifier all
         let token = case identifier of
-                      _ | identifier == "ERROR" -> KeywordError lineNumber
+                      _ | identifier == "BINARY" -> KeywordBinary lineNumber
+                        | identifier == "ERROR" -> KeywordError lineNumber
                         | identifier == "INITIAL" -> KeywordInitial lineNumber
                         | identifier == "LEXER" -> KeywordLexer lineNumber
                         | identifier == "MONAD" -> KeywordMonad lineNumber
