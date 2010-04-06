@@ -7,23 +7,23 @@ import Control.Monad.Error
 MONAD { Parse }
 ERROR { parseError }
 
-LEXER NAME { expressionLexer }
+LEXER NAME expressionLexer
 | '[0-9]+'                         { Integer $ read $0 }
 | '[a-zA-Z_][a-zA-Z_0-9]*'         { Identifier $0 }
 | '\+'                             { Plus }
 | '-'	                           { Minus }
-| '*'	                           { Star }
+| '\*'	                           { Star }
 | '/'	                           { Slash }
 | '\('	                           { LeftParenthesis }
 | '\)'	                           { RightParenthesis }
 
-LEXER NAME { argumentLexer }
+LEXER NAME argumentLexer
 | '[0-9]+'                         { Integer $ read $0 }
 | ','                              { Comma }
 | '\('	                           { LeftParenthesis }
 | '\)'	                           { RightParenthesis }
 
-USER LEXER NAME { stringArgumentLexer }
+USER LEXER NAME stringArgumentLexer
 
 TOKEN TYPE { Token } NAMES
 | integer       { Integer $$ }

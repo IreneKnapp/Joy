@@ -43,7 +43,7 @@ data GenerationState = GenerationState {
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
-        generationStateCompiledLexers :: [(ClientExpression, Bool, AnyLexer)],
+        generationStateCompiledLexers :: [(String, Bool, AnyLexer)],
         generationStateTerminals :: [GrammarSymbol],
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions
@@ -52,10 +52,10 @@ data GenerationState = GenerationState {
 
 
 data LexerInformation = LexerInformation {
-        lexerInformationMaybeInitialName :: Maybe ClientExpression,
-        lexerInformationUserNames :: [ClientExpression],
+        lexerInformationMaybeInitialName :: Maybe String,
+        lexerInformationUserNames :: [String],
         lexerInformationNonuserNamesAndDefinitions
-            :: [(ClientExpression, Bool, [(LineNumber, String, ClientExpression)])]
+            :: [(String, Bool, [(LineNumber, String, ClientExpression)])]
     }
 
 
@@ -102,8 +102,8 @@ debugEarlyGenerationState = do
 debugLexers :: Generation ()
 debugLexers = do
   GenerationState { generationStateCompiledLexers = lexers } <- get
-  mapM_ (\(ClientExpression name, binaryFlag, lexer) -> do
-          liftIO $ putStrLn $ "\nLexer {" ++ name ++ "}"
+  mapM_ (\(name, binaryFlag, lexer) -> do
+          liftIO $ putStrLn $ "\nLexer " ++ name
                               ++ (if binaryFlag then " binary" else "")
           case lexer of
             CharLexer lexer -> debugAutomaton lexer
@@ -248,7 +248,7 @@ processLexerDeclarations = do
       userNames = map (\(UserLexerDeclaration _ _ name) -> name) userDeclarations
       nonuserNamesAndDefinitions
           = map (\(LexerDeclaration _ _ binary maybeName definition)
-                     -> let name = maybe (ClientExpression "_Joy_lexer")
+                     -> let name = maybe "Joy_lexer"
                                          id
                                          maybeName
                         in (name, binary, definition))

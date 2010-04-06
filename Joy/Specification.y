@@ -82,12 +82,12 @@ DeclarationList :: { [Declaration] }
         (KeywordMonad lineNumber, ClientCode _ body)
           -> $1 ++ [MonadDeclaration lineNumber $ ClientType body] }
     
-    | DeclarationList user MaybeInitial lexer name clientCode
+    | DeclarationList user MaybeInitial lexer name identifier
     { case ($2, $3, $6) of
-        (KeywordUser lineNumber, (_, maybeInitial), ClientCode _ body)
+        (KeywordUser lineNumber, (_, maybeInitial), Identifier _ name)
           -> $1 ++ [UserLexerDeclaration lineNumber
                                          maybeInitial
-                                         (ClientExpression body)] }
+                                         name] }
     
     | DeclarationList error_ clientCode
     { case ($2, $3) of
@@ -128,12 +128,12 @@ MaybeBinary :: { (Maybe LineNumber, Bool) }
         (KeywordBinary lineNumber) -> (Just lineNumber, True) }
 
 
-MaybeName :: { Maybe ClientExpression }
+MaybeName :: { Maybe String }
     :
     { Nothing }
-    | name clientCode
+    | name identifier
     { case $2 of
-        (ClientCode _ body) -> Just $ ClientExpression body }
+        (Identifier _ name) -> Just name }
 
 
 LexerDefinitionList :: { [(LineNumber, String, ClientExpression)] }
@@ -267,11 +267,11 @@ data Declaration = MonadDeclaration LineNumber ClientType
                  | ErrorDeclaration LineNumber ClientExpression
                  | UserLexerDeclaration LineNumber
                                         Bool
-                                        ClientExpression
+                                        String
                  | LexerDeclaration LineNumber
                                     Bool
                                     Bool
-                                    (Maybe ClientExpression)
+                                    (Maybe String)
                                     [(LineNumber, String, ClientExpression)]
                  | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
                  | NonterminalDeclaration {

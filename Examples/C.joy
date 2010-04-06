@@ -1,0 +1,99 @@
+LANGUAGE Joy/1.0 Haskell
+module Main where
+
+import Control.Monad.Error
+
+--
+MONAD { Parse }
+ERROR { parseError }
+
+LEXER NAME cppLexer
+
+| SUBEXPRESSION hex '[0-9a-fA-F]'
+| SUBEXPRESSION shortCharacterName
+  '\\u(\g<hex>\g<hex>\g<hex>\g<hex>)'
+  { readHexEscape $1 }
+| SUBEXPRESSION longCharacterName
+  '\\U(\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>)'
+  { readHexEscape $1 }
+| SUBEXPRESSION ucn
+  '\g<shortCharacterName>|\g<longCharacterName>'
+
+| SUBEXPRESSION simpleEscape
+  '\\''|\\"|\\?|\\\\|\\a|\\b|\\f|\\n|\\r|\\t|\\v'
+| SUBEXPRESSION octalEscape
+  '\\([0-7]([0-7][0-7]?)?)'
+  { readOctalEscape $1 }
+| SUBEXPRESSION hexadecimalEscape
+  '\\x(\g<hex>+)'
+  { readHexEscape $1 }
+| SUBEXPRESSION escape
+  '\g<simpleEscape>|\g<octalEscape>|\g<hexadecimalEscape>|\g<ucn>'
+
+| '([a-zA-Z_]|\g<ucn>)([a-zA-Z0-9_]|\g<ucn>)*'
+                                         { CPPIdentifier $0 }
+| '\.?[0-9]([a-zA-Z_0-9.]|[eEpP][+-])*'  { CPPNumber $0 }
+| '''(([^''\\\n]|\g<escape>)*)'''        { CPPCharacterConstant False $1 }
+| 'L''(([^''\\\n]|\g<escape>)*)'''       { CPPCharacterConstant True $1 }
+| '"(([^"\\\n]|\g<escape>)*)"'           { CPPStringLiteral False $1 }
+| 'L"(([^"\\\n]|\g<escape>)*)"'          { CPPStringLiteral True $1 }
+
+| SUBEXPRESSION punctuatorsA
+  '\[|\]|\(|\)|\{|\}|\.|->|++|--|&|\*|\+|-|~|!|/|%|<<|>>|<|>|<=|>=|==|!='
+| SUBEXPRESSION punctuatorsB
+  '^|\||&&|\|\||\?|:|;|...|=|\*=|/=|%=|\+=|-=|<<=|>>=|&=|^=|\|=|,'
+| SUBEXPRESSION punctuatorsC
+  '#|##|<:|:>|<%|%>|%:|%:%:'
+| '\g<punctuatorsA>|\g<punctuatorsB>|\g<punctuatorsC>'
+                                         { CPPPunctuator $0 }
+
+| '( |\t|\n|\v|\f)+'                     { CPPWhitespace $0 }
+| '/\*(((?!\*/).)*)\*/'                  { CPPMultilineComment $1 }
+| '//([^\n]*)(?=\n)'                     { CPPLineComment $1 }
+| '.'                                    { CPPOther $0 }
+
+LEXER NAME cppHeaderNameLexer PARENT cppLexer
+| '"([^\n"]+)"'                          { CPPHeaderName False $1 }
+| '<([^\n>]+)>'                          { CPPHeaderName True $1 }
+
+--
+
+type Parse = Error ParseError
+
+
+data CPPToken = CPPHeaderName Bool String
+              | CPPIdentifier String
+              | CPPNumber String
+              | CPPCharacterConstant Bool String
+              | CPPStringLiteral Bool String
+              | CPPPunctuator String
+              | CPPWhitespace String
+              | CPPLineComment String
+              | CPPMultilineComment String
+              | CPPOther String
+                deriving (Show)
+
+data ParseError = ParseError String
+instance Error ParseError where
+    strMsg message = ParseError message
+instance Show ParseError where
+    show (ParseError string) = string
+
+
+readHexEscape :: String -> String
+readHexEscape input = ...
+
+
+main :: IO ()
+main = do
+  let loop = do
+        line <- getLine
+        case line of
+          "" -> return ()
+          _ -> do
+            eitherErrorResult = runError (cppLexer line)
+            case eitherErrorResult of
+              Left error -> putStrLn $ "Parse error: " ++ (show error)
+              Right result -> putStrLn $ "Result: " ++ (show result)
+            loop
+  loop
