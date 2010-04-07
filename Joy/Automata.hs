@@ -210,41 +210,47 @@ nfaToDFA nfa = do
                                  $ fromJust
                                  $ getTransition nfa sourceNFAState testInput)
                                $ Set.toList sourceNFAStates
-                   (dfa, targetDFAState)
-                       <- case Map.lookup targetNFAStates stateSetMap of
-                            Just targetDFAState -> return (dfa, targetDFAState)
-                            Nothing -> do
-                              let possibleActions
-                                    = foldl (\accumulator maybeAction ->
-                                              case maybeAction of
-                                                Nothing -> accumulator
-                                                Just action -> accumulator ++ [action])
-                                            []
-                                            $ map (\state -> automatonStateData nfa state)
-                                                  $ Set.toList targetNFAStates
-                              maybeAction
-                                  <- case possibleActions of
-                                       [] -> return Nothing
-                                       [action] -> return $ Just action
-                                       _ -> fail $ "Conflict in lexer"
-                              let accepting = any (automatonStateAccepting nfa)
-                                                  $ Set.toList targetNFAStates
-                              (dfa, targetDFAState) <- automatonAddState dfa
-                                                                         maybeAction
-                              dfa <- return $ automatonSetStateAccepting dfa
+                   if Set.size targetNFAStates > 0
+                     then do
+                       (dfa, targetDFAState)
+                           <- case Map.lookup targetNFAStates stateSetMap of
+                                Just targetDFAState -> return (dfa, targetDFAState)
+                                Nothing -> do
+                                  let possibleActions
+                                        = foldl (\accumulator maybeAction ->
+                                                  case maybeAction of
+                                                    Nothing -> accumulator
+                                                    Just action -> accumulator
+                                                                   ++ [action])
+                                                []
+                                                $ map (\state
+                                                        -> automatonStateData nfa state)
+                                                      $ Set.toList targetNFAStates
+                                  maybeAction
+                                      <- case possibleActions of
+                                           [] -> return Nothing
+                                           [action] -> return $ Just action
+                                           _ -> fail $ "Conflict in lexer"
+                                  let accepting = any (automatonStateAccepting nfa)
+                                                      $ Set.toList targetNFAStates
+                                  (dfa, targetDFAState) <- automatonAddState dfa
+                                                                             maybeAction
+                                  dfa <- return $ automatonSetStateAccepting
+                                                    dfa
+                                                    targetDFAState
+                                                    accepting
+                                  dfa <- return $ automatonAddTransition dfa
+                                                                         sourceDFAState
                                                                          targetDFAState
-                                                                         accepting
-                              dfa <- return $ automatonAddTransition dfa
-                                                                     sourceDFAState
-                                                                     targetDFAState
-                                                                     enumSet
-                                                                     ()
-                              return (dfa, targetDFAState)
-                   stateSetMap <- return $ Map.insert targetNFAStates
-                                                      targetDFAState
-                                                      stateSetMap
-                   queue <- return $ enqueue queue stateSetMap targetNFAStates
-                   return (dfa, stateSetMap, queue))
+                                                                         enumSet
+                                                                         ()
+                                  return (dfa, targetDFAState)
+                       stateSetMap <- return $ Map.insert targetNFAStates
+                                                          targetDFAState
+                                                          stateSetMap
+                       queue <- return $ enqueue queue stateSetMap targetNFAStates
+                       return (dfa, stateSetMap, queue)
+                     else return (dfa, stateSetMap, queue))
                 (dfa, stateSetMap, queue)
                 relevantEnumSets
           convertQueue queue dfa stateSetMap
