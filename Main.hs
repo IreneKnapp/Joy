@@ -4,7 +4,6 @@ module Main (main)
 
 import Control.Monad.Error
 import Control.Monad.State
-import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
 import System.Environment

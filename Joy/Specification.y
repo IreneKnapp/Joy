@@ -4,6 +4,7 @@ module Joy.Specification (
                           JoyVersion(..),
                           ClientLanguage(..),
                           Declaration(..),
+                          LexerDefinitionItem(..),
                           GrammarSymbol(..),
                           SpecificationParseError(..),
                           readSpecificationFile
@@ -47,8 +48,10 @@ import Joy.Documentation
         monadic               { KeywordMonadic _ }
         name                  { KeywordName _ }
         names                 { KeywordNames _ }
+        parent                { KeywordParent _ }
         parser                { KeywordParser _ }
         partial               { KeywordPartial _ }
+        subexpression         { KeywordSubexpression _ }
         token                 { KeywordToken _ }
         type                  { KeywordType _ }
         user                  { KeywordUser _ }
@@ -94,14 +97,15 @@ DeclarationList :: { [Declaration] }
         (KeywordError lineNumber, ClientCode _ body)
           -> $1 ++ [ErrorDeclaration lineNumber $ ClientExpression body] }
     
-    | DeclarationList MaybeInitial MaybeBinary lexer MaybeName LexerDefinitionList
+    | DeclarationList MaybeInitial MaybeBinary lexer MaybeName MaybeParent
+      LexerDefinitionList
     { case ($2, $3, $4) of
         ((Nothing, maybeInitial), (Nothing, maybeBinary), KeywordLexer lineNumber)
-          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6]
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6 $7]
         ((Nothing, maybeInitial), (Just lineNumber, maybeBinary), _)
-          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6]
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6 $7]
         ((Just lineNumber, maybeInitial), (_, maybeBinary), _)
-          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6] }
+          -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6 $7] }
     
     | DeclarationList token type clientCode names TokenDefinitionList
     { case ($2, $4) of
@@ -136,13 +140,31 @@ MaybeName :: { Maybe String }
         (Identifier _ name) -> Just name }
 
 
-LexerDefinitionList :: { [(LineNumber, String, ClientExpression)] }
+MaybeParent :: { Maybe String }
+    :
+    { Nothing }
+    | parent identifier
+    { case $2 of
+        (Identifier _ name) -> Just name }
+
+
+LexerDefinitionList :: { [LexerDefinitionItem] }
     :
     { [] }
     | LexerDefinitionList '|' string clientCode
     { case ($3, $4) of
         (StringLiteral lineNumber string, ClientCode _ body)
-          -> $1 ++ [(lineNumber, string, ClientExpression body)] }
+          -> $1 ++ [LexerNormalItem lineNumber string (ClientExpression body)] }
+    | LexerDefinitionList '|' subexpression identifier string
+    { case ($3, $4, $5) of
+        (KeywordSubexpression lineNumber, Identifier _ name, StringLiteral _ value)
+            -> $1 ++ [LexerSubexpressionItem lineNumber name value Nothing] }
+    | LexerDefinitionList '|' subexpression identifier string clientCode
+    { case ($3, $4, $5, $6) of
+        (KeywordSubexpression lineNumber, Identifier _ name, StringLiteral _ value,
+         ClientCode _ body)
+            -> $1 ++ [LexerSubexpressionItem lineNumber name value
+                                             (Just $ ClientExpression body)] }
 
 
 TokenDefinitionList :: { [(GrammarSymbol, String)] }
@@ -272,7 +294,8 @@ data Declaration = MonadDeclaration LineNumber ClientType
                                     Bool
                                     Bool
                                     (Maybe String)
-                                    [(LineNumber, String, ClientExpression)]
+                                    (Maybe String)
+                                    [LexerDefinitionItem]
                  | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
                  | NonterminalDeclaration {
                      nonterminalDeclarationLineNumber
@@ -292,10 +315,20 @@ instance Located Declaration where
     location (MonadDeclaration result _) = result
     location (ErrorDeclaration result _) = result
     location (UserLexerDeclaration result _ _) = result
-    location (LexerDeclaration result _ _ _ _) = result
+    location (LexerDeclaration result _ _ _ _ _) = result
     location (TokensDeclaration result _ _) = result
     location result@(NonterminalDeclaration { })
         = nonterminalDeclarationLineNumber result
+
+
+data LexerDefinitionItem
+    = LexerNormalItem LineNumber String ClientExpression
+    | LexerSubexpressionItem LineNumber String String (Maybe ClientExpression)
+
+
+instance Located LexerDefinitionItem where
+    location (LexerNormalItem result _ _) = result
+    location (LexerSubexpressionItem result _ _ _) = result
 
 
 data GrammarSymbol = IdentifierTerminal String
@@ -352,8 +385,10 @@ data Token = EndOfInput LineNumber
            | KeywordMonadic LineNumber
            | KeywordName LineNumber
            | KeywordNames LineNumber
+           | KeywordParent LineNumber
            | KeywordParser LineNumber
            | KeywordPartial LineNumber
+           | KeywordSubexpression LineNumber
            | KeywordToken LineNumber
            | KeywordType LineNumber
            | KeywordUser LineNumber
@@ -377,8 +412,10 @@ instance Located Token where
     location (KeywordMonadic result) = result
     location (KeywordName result) = result
     location (KeywordNames result) = result
+    location (KeywordParent result) = result
     location (KeywordParser result) = result
     location (KeywordPartial result) = result
+    location (KeywordSubexpression result) = result
     location (KeywordToken result) = result
     location (KeywordType result) = result
     location (KeywordUser result) = result
@@ -405,8 +442,10 @@ instance Show Token where
     show (KeywordMonadic _) = "MONADIC"
     show (KeywordName _) = "NAME"
     show (KeywordNames _) = "NAMES"
+    show (KeywordParent _) = "PARENT"
     show (KeywordParser _) = "PARSER"
     show (KeywordPartial _) = "PARTIAL"
+    show (KeywordSubexpression _) = "SUBEXPRESSION"
     show (KeywordToken _) = "TOKEN"
     show (KeywordType _) = "TYPE"
     show (KeywordUser _) = "USER"
@@ -556,8 +595,11 @@ lexer all@(c:rest) = do
                         | identifier == "MONADIC" -> KeywordMonadic lineNumber
                         | identifier == "NAME" -> KeywordName lineNumber
                         | identifier == "NAMES" -> KeywordNames lineNumber
+                        | identifier == "PARENT" -> KeywordParent lineNumber
                         | identifier == "PARSER" -> KeywordParser lineNumber
                         | identifier == "PARTIAL" -> KeywordPartial lineNumber
+                        | identifier == "SUBEXPRESSION"
+                            -> KeywordSubexpression lineNumber
                         | identifier == "TOKEN" -> KeywordToken lineNumber
                         | identifier == "TYPE" -> KeywordType lineNumber
                         | identifier == "USER" -> KeywordUser lineNumber

@@ -13,6 +13,9 @@ module Joy.Generation (
 
 import Control.Monad.Error
 import Control.Monad.State
+import Data.Char
+import Data.Function
+import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
@@ -52,10 +55,10 @@ data GenerationState = GenerationState {
 
 
 data LexerInformation = LexerInformation {
-        lexerInformationMaybeInitialName :: Maybe String,
+        lexerInformationInitialName :: String,
         lexerInformationUserNames :: [String],
         lexerInformationNonuserNamesAndDefinitions
-            :: [(String, Bool, [(LineNumber, String, ClientExpression)])]
+            :: [(String, Bool, [LexerDefinitionItem])]
     }
 
 
@@ -202,13 +205,13 @@ processLexerDeclarations = do
   state <- get
   let declarations = filter (\declaration -> case declaration of
                                UserLexerDeclaration _ _ _ -> True
-                               LexerDeclaration _ _ _ _ _ -> True
+                               LexerDeclaration _ _ _ _ _ _ -> True
                                _ -> False)
                             $ specificationDeclarations
                             $ generationStateSpecification state
       initialDeclarations = filter (\declaration -> case declaration of
                                      UserLexerDeclaration _ True _ -> True
-                                     LexerDeclaration _ True _ _ _ -> True
+                                     LexerDeclaration _ True _ _ _ _ -> True
                                      _ -> False)
                                    $ specificationDeclarations
                                    $ generationStateSpecification state
@@ -218,7 +221,7 @@ processLexerDeclarations = do
     _ -> do
            let declarationsMissingNames
                    = filter (\declaration -> case declaration of
-                                               LexerDeclaration _ _ _ Nothing _ -> True
+                                               LexerDeclaration _ _ _ Nothing _ _ -> True
                                                _ -> False)
                             declarations
            case declarationsMissingNames of
@@ -234,27 +237,75 @@ processLexerDeclarations = do
     [declaration] -> return declaration
     _ -> fail $ "Multiple INITIAL LEXER declarations, at lines "
                 ++ (englishList $ map (show . location) initialDeclarations)
-  let maybeInitialName = case initialDeclaration of
-        UserLexerDeclaration _ _ name -> Just name
-        LexerDeclaration _ _ _ maybeName _ -> maybeName
-      userDeclarations = filter (\declaration -> case declaration of
+  let defaultLexerName = "joy_lexer"
+      initialName = case initialDeclaration of
+        UserLexerDeclaration _ _ name -> name
+        LexerDeclaration _ _ _ maybeName _ _ -> maybe defaultLexerName id maybeName
+      namesAndLines = map (\declaration -> case declaration of
+                            UserLexerDeclaration lineNumber _ name -> (name, lineNumber)
+                            LexerDeclaration lineNumber _ _ maybeName _ _
+                                -> (maybe defaultLexerName id maybeName, lineNumber))
+                          declarations
+      nonuniqueNames = map fst
+                       $ deleteFirstsBy ((==) `on` fst)
+                                        namesAndLines
+                                        $ nubBy ((==) `on` fst) namesAndLines
+      nonuniqueLines = map snd
+                       $ filter (\(name, _) -> elem name nonuniqueNames)
+                                namesAndLines
+      invalidNameLines = map snd
+                         $ filter (\(name, line) -> isUpper $ head name)
+                                  namesAndLines
+  case length invalidNameLines of
+    0 -> return ()
+    1 -> fail $ "Lexer with invalid name, at line " ++ (show $ head invalidNameLines)
+    _ -> fail $ "Lexers with invalid names, at lines "
+                ++ (englishList $ map show invalidNameLines)
+  if length nonuniqueLines > 0
+    then fail $ "Lexers with duplicate names, at lines "
+                ++ (englishList $ map show nonuniqueLines)
+                ++ "."
+    else return ()
+  let userDeclarations = filter (\declaration -> case declaration of
                                   UserLexerDeclaration _ _ _ -> True
                                   _ -> False)
                                 declarations
       nonuserDeclarations = filter (\declaration -> case declaration of
-                                     LexerDeclaration _ _ _ _ _ -> True
+                                     LexerDeclaration _ _ _ _ _ _ -> True
                                      _ -> False)
                                    declarations
       userNames = map (\(UserLexerDeclaration _ _ name) -> name) userDeclarations
-      nonuserNamesAndDefinitions
-          = map (\(LexerDeclaration _ _ binary maybeName definition)
-                     -> let name = maybe "Joy_lexer"
-                                         id
-                                         maybeName
-                        in (name, binary, definition))
-                nonuserDeclarations
-      lexerInformation = LexerInformation {
-                             lexerInformationMaybeInitialName = maybeInitialName,
+      nameDefinitionMap
+          = Map.fromList
+            $ map (\(LexerDeclaration _ _ binaryFlag maybeName maybeParent definition)
+                       -> (maybe defaultLexerName id maybeName,
+                           (definition, binaryFlag, maybeParent)))
+                  nonuserDeclarations
+      visitParent visited accumulator parentName = do
+        if elem parentName visited
+          then fail $ "Cycle in lexer parents: " ++ (englishList visited)
+          else return ()
+        let maybeParentDefinition = Map.lookup parentName nameDefinitionMap
+        case maybeParentDefinition of
+          Nothing -> if elem parentName userNames
+                       then fail $ "Lexer " ++ parentName
+                                   ++ " referenced as a parent but defined as USER."
+                       else fail $ "Lexer " ++ parentName
+                                   ++ " referenced as a parent but not defined."
+          Just parentDefinition -> do
+            return accumulator
+      definitionIncludingParents baseName = do
+        let (definition, binaryFlag, maybeParent)
+                = fromJust $ Map.lookup baseName nameDefinitionMap
+        case maybeParent of
+          Nothing -> return (baseName, binaryFlag, definition)
+          Just parentName -> do
+            recursiveResult <- visitParent [baseName] definition parentName
+            return (baseName, binaryFlag, recursiveResult)
+  nonuserNamesAndDefinitions <- mapM definitionIncludingParents
+                                     $ Map.keys nameDefinitionMap
+  let lexerInformation = LexerInformation {
+                             lexerInformationInitialName = initialName,
                              lexerInformationUserNames = userNames,
                              lexerInformationNonuserNamesAndDefinitions
                                  = nonuserNamesAndDefinitions
@@ -287,7 +338,22 @@ compileLexers = do
       definitions = map (\(_, _, a) -> a)
                     $ lexerInformationNonuserNamesAndDefinitions
                     $ fromJust maybeInformation
-  compiledLexers <- mapM (uncurry compileLexer)
+  compiledLexers <- mapM (\(definition, binaryFlag) -> do
+                           let normalItems
+                                   = map (\(LexerNormalItem a b c) -> (a, b, c))
+                                         $ filter (\item -> case item of
+                                                    LexerNormalItem _ _ _ -> True
+                                                    _ -> False)
+                                                  definition
+                               subexpressionItems
+                                   = map (\(LexerSubexpressionItem a b c d)
+                                              -> (a, b, c, d))
+                                           $ filter (\item -> case item of
+                                                      LexerSubexpressionItem _ _ _ _
+                                                          -> True
+                                                      _ -> False)
+                                                    definition
+                           compileLexer normalItems subexpressionItems binaryFlag)
                          $ zip definitions binaryFlags
   state <- get
   put $ state { generationStateCompiledLexers = zip3 names binaryFlags compiledLexers }
@@ -295,9 +361,10 @@ compileLexers = do
 
 
 compileLexer :: [(LineNumber, String, ClientExpression)]
+             -> [(LineNumber, String, String, Maybe ClientExpression)]
              -> Bool
              -> Generation AnyLexer
-compileLexer regexpStringResultTuples binaryFlag = do
+compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
   case binaryFlag of
     False -> do
       regexps <- mapM (\(lineNumber, regexpString, _) -> do
