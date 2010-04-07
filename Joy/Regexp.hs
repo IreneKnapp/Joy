@@ -121,10 +121,10 @@ parseRegexp input subexpressionBindings =
           (after, rest) <- parseRegexp' depth [] rest
           case after of
             [Alternation otherChoices] -> return $ ([Alternation
-                                                     (Sequence firstChoice
+                                                     (Sequence (reverse firstChoice)
                                                       : otherChoices)],
                                                     rest)
-            otherChoices -> return $ ([Alternation [Sequence firstChoice,
+            otherChoices -> return $ ([Alternation [Sequence (reverse firstChoice),
                                                     Sequence otherChoices]],
                                       rest)
         parseRegexp' depth [] (Special '?':rest) = fail $ "Nothing before '?' in regexp"
