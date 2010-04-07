@@ -33,10 +33,10 @@ LEXER NAME cppLexer
 | '([a-zA-Z_]|{ucn})([a-zA-Z0-9_]|{ucn})*'
                                          { CPPIdentifier $0 }
 | '\.?[0-9]([a-zA-Z_0-9.]|[eEpP][+-])*'  { CPPNumber $0 }
-| '''(([^''\\\n]|{escape})*)'''        { CPPCharacterConstant False $1 }
-| 'L''(([^''\\\n]|{escape})*)'''       { CPPCharacterConstant True $1 }
-| '"(([^"\\\n]|{escape})*)"'           { CPPStringLiteral False $1 }
-| 'L"(([^"\\\n]|{escape})*)"'          { CPPStringLiteral True $1 }
+| '''(([^''\\\n]|{escape})*)'''          { CPPCharacterConstant False $1 }
+| 'L''(([^''\\\n]|{escape})*)'''         { CPPCharacterConstant True $1 }
+| '"(([^"\\\n]|{escape})*)"'             { CPPStringLiteral False $1 }
+| 'L"(([^"\\\n]|{escape})*)"'            { CPPStringLiteral True $1 }
 
 | SUBEXPRESSION punctuatorsA
   '\[|\]|\(|\)|\{|\}|\.|->|++|--|&|\*|\+|-|~|!|/|%|<<|>>|<|>|<=|>=|==|!='
