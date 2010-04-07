@@ -29,6 +29,9 @@ import Joy.Automata
 import Joy.EnumSet
 import Joy.Uniqueness
 
+import Debug.Trace
+
+
 data (Ord content, Bounded content, Enum content) => Regexp content
     = EnumSetRegexp (EnumSet content)
     | Sequence [Regexp content]
@@ -37,6 +40,18 @@ data (Ord content, Bounded content, Enum content) => Regexp content
     | ZeroOrMore (Regexp content)
     | OneOrMore (Regexp content)
     | Grouped (Regexp content)
+    | NamedSubexpression String
+
+
+instance (Ord content, Bounded content, Enum content) => Show (Regexp content) where
+    show (EnumSetRegexp enumSet) = "EnumSet" ++ show enumSet
+    show (Sequence regexps) = "Sequence " ++ show regexps
+    show (Alternation regexps) = "Alternation " ++ show regexps
+    show (ZeroOrOne regexp) = "ZeroOrOne (" ++ show regexp ++ ")"
+    show (ZeroOrMore regexp) = "ZeroOrMore (" ++ show regexp ++ ")"
+    show (OneOrMore regexp) = "OneOrMore (" ++ show regexp ++ ")"
+    show (Grouped regexp) = "Grouped (" ++ show regexp ++ ")"
+    show (NamedSubexpression identifier) = "NamedSubexpression " ++ identifier
 
 
 data RegexpParseError = RegexpParseError String
@@ -65,6 +80,14 @@ parseRegexp input subexpressionBindings =
                      -> RegexpParse ([Regexp content], [RegexpChar content])
         parseRegexp' 0 accumulator [] = return (reverse accumulator, [])
         parseRegexp' depth _ [] = fail $ "Unbalanced '(' in regexp"
+        parseRegexp' depth accumulator (Special '(':rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (Grouped $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' 0 _ (Special ')':_)
+            = fail $ "Unbalanced ')' in regexp"
+        parseRegexp' depth accumulator (Special ')':rest)
+            = return (reverse accumulator, rest)
         parseRegexp' depth accumulator (Special '[':Special '^':rest) = do
           (enumSet, rest) <- parseEnumSet emptyEnumSet rest
           let accumulator' = (mkEnumSetRegexp $ inverseEnumSet enumSet) : accumulator
@@ -75,16 +98,15 @@ parseRegexp input subexpressionBindings =
           parseRegexp' depth accumulator' rest
         parseRegexp' depth _ (Special ']':_)
             = fail $ "Unbalanced ']' in regexp"
-        parseRegexp' depth accumulator (Special '(':rest) = do
-          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
-          let accumulator' = (Grouped $ mkSequenceRegexp recursiveResult) : accumulator
+        parseRegexp' depth accumulator (Special '{':rest) = do
+          (identifier, rest) <- parseIdentifier rest
+          let accumulator' = (NamedSubexpression identifier) : accumulator
           parseRegexp' depth accumulator' rest
-        parseRegexp' 0 _ (Special ')':_)
-            = fail $ "Unbalanced ')' in regexp"
-        parseRegexp' depth accumulator (Special ')':rest)
-            = return (reverse accumulator, rest)
         parseRegexp' depth accumulator (Normal c:rest) = do
           let accumulator' = (mkSingletonRegexp c) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth accumulator (Special '.':rest) = do
+          let accumulator' = (mkEnumSetRegexp fullEnumSet) : accumulator
           parseRegexp' depth accumulator' rest
         parseRegexp' depth (mostRecent:older) (Special '?':rest) = do
           let accumulator' = (mkZeroOrOneRegexp mostRecent) : older
@@ -95,6 +117,16 @@ parseRegexp input subexpressionBindings =
         parseRegexp' depth (mostRecent:older) (Special '+':rest) = do
           let accumulator' = (mkOneOrMoreRegexp mostRecent) : older
           parseRegexp' depth accumulator' rest
+        parseRegexp' depth firstChoice (Special '|':rest) = do
+          (after, rest) <- parseRegexp' depth [] rest
+          case after of
+            [Alternation otherChoices] -> return $ ([Alternation
+                                                     (Sequence firstChoice
+                                                      : otherChoices)],
+                                                    rest)
+            otherChoices -> return $ ([Alternation [Sequence firstChoice,
+                                                    Sequence otherChoices]],
+                                      rest)
         parseRegexp' depth [] (Special '?':rest) = fail $ "Nothing before '?' in regexp"
         parseRegexp' depth [] (Special '*':rest) = fail $ "Nothing before '*' in regexp"
         parseRegexp' depth [] (Special '+':rest) = fail $ "Nothing before '+' in regexp"
@@ -111,6 +143,15 @@ parseRegexp input subexpressionBindings =
         parseEnumSet enumSet (Normal c:rest)
             = parseEnumSet (unionEnumSet enumSet $ enumerationEnumSet [c])
                            rest
+        
+        parseIdentifier :: [RegexpChar content]
+                        -> RegexpParse (String, [RegexpChar content])
+        parseIdentifier input = do
+          let parseIdentifier' accumulator (Special '}':rest)
+                  = return (reverse accumulator, rest)
+              parseIdentifier' accumulator (Special c:rest)
+                  = parseIdentifier' (c:accumulator) rest
+          parseIdentifier' "" input
         
         fromChar :: Char -> content
         fromChar character = toEnum $ fromEnum character
@@ -142,6 +183,8 @@ parseRegexp input subexpressionBindings =
             = return ([Normal $ fromChar '\t'], state, rest)
         scanRegexpChar state ('\\':'v':rest) | elem state [NormalState, SetState]
             = return ([Normal $ fromChar '\v'], state, rest)
+        scanRegexpChar NormalState ('\\':'.':rest)
+            = return ([Normal $ fromChar '.'], NormalState, rest)
         scanRegexpChar NormalState ('\\':'+':rest)
             = return ([Normal $ fromChar '+'], NormalState, rest)
         scanRegexpChar NormalState ('\\':'*':rest)
@@ -170,6 +213,8 @@ parseRegexp input subexpressionBindings =
           (content, rest) <- readHexEscape 8 rest
           return ([Normal content], state, rest)
         scanRegexpChar _ ('\\':_) = fail $ "Invalid '\\' escape in regexp"
+        scanRegexpChar NormalState ('.':rest)
+            = return ([Special '.'], NormalState, rest)
         scanRegexpChar NormalState ('+':rest)
             = return ([Special '+'], NormalState, rest)
         scanRegexpChar NormalState ('*':rest)
@@ -178,6 +223,10 @@ parseRegexp input subexpressionBindings =
             = return ([Special '?'], NormalState, rest)
         scanRegexpChar NormalState ('|':rest)
             = return ([Special '|'], NormalState, rest)
+        scanRegexpChar NormalState ('(':rest)
+            = return ([Special '('], NormalState, rest)
+        scanRegexpChar NormalState (')':rest)
+            = return ([Special ')'], NormalState, rest)
         scanRegexpChar NormalState ('[':'^':rest)
             = return ([Special '[', Special '^'], SetState, rest)
         scanRegexpChar NormalState ('[':rest)
@@ -350,6 +399,8 @@ regexpToNFA regexp datum = do
                            nfa
                            $ Map.toList exampleTransitions
           return (nfa', newTailStates)
+        regexpToNFA' (nfa, initialTailStates) (NamedSubexpression identifier) = do
+          return (nfa, initialTailStates)
     emptyNFA <- emptyAutomaton Nothing
     (fullNFA, fullNFATailStates) <- regexpToNFA' (emptyNFA, automatonStates emptyNFA)
                                                  regexp

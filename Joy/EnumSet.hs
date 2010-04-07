@@ -24,6 +24,10 @@ data (Ord content, Bounded content, Enum content) => EnumSet content
     = EnumSet [(content, content)]
 
 
+instance (Ord content, Bounded content, Enum content) => Show (EnumSet content) where
+    show (EnumSet ranges) = show $ map (\(start, end) -> (toEnum $ fromEnum start :: Char, toEnum $ fromEnum end :: Char)) ranges
+
+
 instance (Ord content, Bounded content, Enum content) => Ord (EnumSet content) where
     compare (EnumSet rangesA) (EnumSet rangesB) = compare rangesA rangesB
 
