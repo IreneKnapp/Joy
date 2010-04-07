@@ -214,7 +214,13 @@ nfaToDFA nfa = do
                      then do
                        (dfa, targetDFAState)
                            <- case Map.lookup targetNFAStates stateSetMap of
-                                Just targetDFAState -> return (dfa, targetDFAState)
+                                Just targetDFAState -> do
+                                  dfa <- return $ automatonAddTransition dfa
+                                                                         sourceDFAState
+                                                                         targetDFAState
+                                                                         enumSet
+                                                                         ()
+                                  return (dfa, targetDFAState)
                                 Nothing -> do
                                   let possibleActions
                                         = foldl (\accumulator maybeAction ->
