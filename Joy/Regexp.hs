@@ -23,7 +23,7 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Numeric
-import Prelude hiding (all, concat, foldl)
+import Prelude hiding (all, concat, elem, foldl)
 
 import Joy.Automata
 import Joy.EnumSet
@@ -49,11 +49,16 @@ data (Ord content, Bounded content, Enum content) => RegexpChar content
     = Normal content | Special Char deriving (Show)
 
 
+data RegexpScanState = NormalState | SetState | IdentifierState
+                       deriving (Eq)
+
+
 parseRegexp
     :: forall content . (Ord content, Bounded content, Enum content)
     => String
+    -> [(String, String)]
     -> Either String (Regexp content)
-parseRegexp input =
+parseRegexp input subexpressionBindings =
     let parseRegexp' :: Int
                      -> [Regexp content]
                      -> [RegexpChar content]
@@ -82,33 +87,17 @@ parseRegexp input =
           let accumulator' = (mkSingletonRegexp c) : accumulator
           parseRegexp' depth accumulator' rest
         parseRegexp' depth (mostRecent:older) (Special '?':rest) = do
-          if isRepetition mostRecent
-            then fail $ "Exponential complexity in regexp"
-            else do
-              let accumulator' = (mkZeroOrOneRegexp mostRecent) : older
-              parseRegexp' depth accumulator' rest
+          let accumulator' = (mkZeroOrOneRegexp mostRecent) : older
+          parseRegexp' depth accumulator' rest
         parseRegexp' depth (mostRecent:older) (Special '*':rest) = do
-          if isRepetition mostRecent
-            then fail $ "Exponential complexity in regexp"
-            else do
-              let accumulator' = (mkZeroOrMoreRegexp mostRecent) : older
-              parseRegexp' depth accumulator' rest
+          let accumulator' = (mkZeroOrMoreRegexp mostRecent) : older
+          parseRegexp' depth accumulator' rest
         parseRegexp' depth (mostRecent:older) (Special '+':rest) = do
-          if isRepetition mostRecent
-            then fail $ "Exponential complexity in regexp"
-            else do
-              let accumulator' = (mkOneOrMoreRegexp mostRecent) : older
-              parseRegexp' depth accumulator' rest
+          let accumulator' = (mkOneOrMoreRegexp mostRecent) : older
+          parseRegexp' depth accumulator' rest
         parseRegexp' depth [] (Special '?':rest) = fail $ "Nothing before '?' in regexp"
         parseRegexp' depth [] (Special '*':rest) = fail $ "Nothing before '*' in regexp"
         parseRegexp' depth [] (Special '+':rest) = fail $ "Nothing before '+' in regexp"
-        
-        isRepetition :: (Regexp content) -> Bool
-        isRepetition (ZeroOrOne _) = True
-        isRepetition (ZeroOrMore _) = True
-        isRepetition (OneOrMore _) = True
-        isRepetition (Grouped child) = isRepetition child
-        isRepetition _ = False
         
         parseEnumSet :: (EnumSet content)
                      -> [RegexpChar content]
@@ -138,78 +127,89 @@ parseRegexp input =
               else return (toEnum $ fromIntegral value, rest)
         
         scanRegexpChar
-            :: Bool
+            :: RegexpScanState
             -> String
-            -> RegexpParse ([RegexpChar content], Bool, String)
-        scanRegexpChar inSet ('\\':'\\':rest)
-            = return ([Normal $ fromChar '\\'], inSet, rest)
-        scanRegexpChar False ('\\':'n':rest)
-            = return ([Normal $ fromChar '\n'], False, rest)
-        scanRegexpChar False ('\\':'r':rest)
-            = return ([Normal $ fromChar '\r'], False, rest)
-        scanRegexpChar False ('\\':'f':rest)
-            = return ([Normal $ fromChar '\f'], False, rest)
-        scanRegexpChar False ('\\':'t':rest)
-            = return ([Normal $ fromChar '\t'], False, rest)
-        scanRegexpChar False ('\\':'v':rest)
-            = return ([Normal $ fromChar '\v'], False, rest)
-        scanRegexpChar False ('\\':'+':rest)
-            = return ([Normal $ fromChar '+'], False, rest)
-        scanRegexpChar False ('\\':'*':rest)
-            = return ([Normal $ fromChar '*'], False, rest)
-        scanRegexpChar False ('\\':'?':rest)
-            = return ([Normal $ fromChar '?'], False, rest)
-        scanRegexpChar False ('\\':'(':rest)
-            = return ([Normal $ fromChar '('], False, rest)
-        scanRegexpChar False ('\\':')':rest)
-            = return ([Normal $ fromChar ')'], False, rest)
-        scanRegexpChar True ('\\':'-':rest)
-            = return ([Normal $ fromChar '-'], True, rest)
-        scanRegexpChar inSet ('\\':'[':rest)
-            = return ([Normal $ fromChar '['], inSet, rest)
-        scanRegexpChar inSet ('\\':']':rest)
-            = return ([Normal $ fromChar ']'], inSet, rest)
-        scanRegexpChar inSet ('\\':'x':rest) | validHexEscape 2 rest = do
+            -> RegexpParse ([RegexpChar content], RegexpScanState, String)
+        scanRegexpChar state ('\\':'\\':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\\'], state, rest)
+        scanRegexpChar state ('\\':'n':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\n'], state, rest)
+        scanRegexpChar state ('\\':'r':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\r'], state, rest)
+        scanRegexpChar state ('\\':'f':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\f'], state, rest)
+        scanRegexpChar state ('\\':'t':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\t'], state, rest)
+        scanRegexpChar state ('\\':'v':rest) | elem state [NormalState, SetState]
+            = return ([Normal $ fromChar '\v'], state, rest)
+        scanRegexpChar NormalState ('\\':'+':rest)
+            = return ([Normal $ fromChar '+'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'*':rest)
+            = return ([Normal $ fromChar '*'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'?':rest)
+            = return ([Normal $ fromChar '?'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'|':rest)
+            = return ([Normal $ fromChar '|'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'(':rest)
+            = return ([Normal $ fromChar '('], NormalState, rest)
+        scanRegexpChar NormalState ('\\':')':rest)
+            = return ([Normal $ fromChar ')'], NormalState, rest)
+        scanRegexpChar SetState ('\\':'-':rest)
+            = return ([Normal $ fromChar '-'], SetState, rest)
+        scanRegexpChar state ('\\':'[':rest)
+            = return ([Normal $ fromChar '['], state, rest)
+        scanRegexpChar state ('\\':']':rest)
+            = return ([Normal $ fromChar ']'], state, rest)
+        scanRegexpChar state ('\\':'x':rest) | validHexEscape 2 rest = do
           (content, rest) <- readHexEscape 2 rest
-          return ([Normal content], inSet, rest)
-        scanRegexpChar inSet ('\\':'u':rest) | validHexEscape 4 rest = do
+          return ([Normal content], state, rest)
+        scanRegexpChar state ('\\':'u':rest) | validHexEscape 4 rest = do
           (content, rest) <- readHexEscape 4 rest
-          return ([Normal content], inSet, rest)
-        scanRegexpChar inSet ('\\':'U':rest) | validHexEscape 8 rest = do
+          return ([Normal content], state, rest)
+        scanRegexpChar state ('\\':'U':rest) | validHexEscape 8 rest = do
           (content, rest) <- readHexEscape 8 rest
-          return ([Normal content], inSet, rest)
+          return ([Normal content], state, rest)
         scanRegexpChar _ ('\\':_) = fail $ "Invalid '\\' escape in regexp"
-        scanRegexpChar False ('+':rest)
-            = return ([Special '+'], False, rest)
-        scanRegexpChar False ('*':rest)
-            = return ([Special '*'], False, rest)
-        scanRegexpChar False ('?':rest)
-            = return ([Special '?'], False, rest)
-        scanRegexpChar False ('[':'^':rest)
-            = return ([Special '[', Special '^'], True, rest)
-        scanRegexpChar False ('[':rest)
-            = return ([Special '['], True, rest)
-        scanRegexpChar False (']':rest)
+        scanRegexpChar NormalState ('+':rest)
+            = return ([Special '+'], NormalState, rest)
+        scanRegexpChar NormalState ('*':rest)
+            = return ([Special '*'], NormalState, rest)
+        scanRegexpChar NormalState ('?':rest)
+            = return ([Special '?'], NormalState, rest)
+        scanRegexpChar NormalState ('|':rest)
+            = return ([Special '|'], NormalState, rest)
+        scanRegexpChar NormalState ('[':'^':rest)
+            = return ([Special '[', Special '^'], SetState, rest)
+        scanRegexpChar NormalState ('[':rest)
+            = return ([Special '['], SetState, rest)
+        scanRegexpChar NormalState (']':rest)
             = fail $ "Unbalanced ']' in regexp"
-        scanRegexpChar True ('[':rest)
+        scanRegexpChar SetState ('[':rest)
             = fail $ "Invalid character '[' in character set in regexp"
-        scanRegexpChar True (']':rest)
-            = return ([Special ']'], False, rest)
-        scanRegexpChar True ('-':rest)
-            = return ([Special '-'], True, rest)
-        scanRegexpChar inSet (c:rest) = return ([Normal $ fromChar c], inSet, rest)
+        scanRegexpChar SetState (']':rest)
+            = return ([Special ']'], NormalState, rest)
+        scanRegexpChar SetState ('-':rest)
+            = return ([Special '-'], SetState, rest)
+        scanRegexpChar NormalState ('{':rest)
+            = return ([Special '{'], IdentifierState, rest)
+        scanRegexpChar IdentifierState ('}':rest)
+            = return ([Special '}'], NormalState, rest)
+        scanRegexpChar IdentifierState (c:rest) | isAlpha c
+            = return ([Special c], IdentifierState, rest)
+        scanRegexpChar state (c:rest) = return ([Normal $ fromChar c], state, rest)
         
-        scanRegexpChars :: Bool -> String -> RegexpParse [RegexpChar content]
-        scanRegexpChars False "" = return []
-        scanRegexpChars True "" = fail $ "Unbalanced '[' in regexp"
-        scanRegexpChars inSet input = do
-          (outputHere, inSet, rest) <- scanRegexpChar inSet input
-          outputRest <- scanRegexpChars inSet rest
+        scanRegexpChars :: RegexpScanState -> String -> RegexpParse [RegexpChar content]
+        scanRegexpChars NormalState "" = return []
+        scanRegexpChars SetState "" = fail $ "Unbalanced '[' in regexp"
+        scanRegexpChars IdentifierState "" = fail $ "Unbalanced '{' in regexp"
+        scanRegexpChars state input = do
+          (outputHere, state, rest) <- scanRegexpChar state input
+          outputRest <- scanRegexpChars state rest
           return $ outputHere ++ outputRest
         
         parseAll :: RegexpParse (Regexp content)
         parseAll = do
-          regexpString <- scanRegexpChars False input
+          regexpString <- scanRegexpChars NormalState input
           (result, _) <- parseRegexp' 0 [] regexpString
           case result of
             [] -> fail "Empty regexp"

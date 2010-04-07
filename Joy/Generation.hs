@@ -373,6 +373,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     False -> do
       regexps <- mapM (\(lineNumber, regexpString, _) -> do
                          let eitherErrorRegexp = parseRegexp regexpString
+                                                             []
                          case eitherErrorRegexp of
                            Left message -> fail $ message
                                                   ++ " at line "
@@ -393,6 +394,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     True -> do
       regexps <- mapM (\(lineNumber, regexpString, _) -> do
                          let eitherErrorRegexp = parseRegexp regexpString
+                                                             []
                          case eitherErrorRegexp of
                            Left message -> fail $ message
                                                   ++ " at line "
