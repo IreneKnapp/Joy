@@ -281,7 +281,7 @@ processLexerDeclarations = do
                        -> (maybe defaultLexerName id maybeName,
                            (definition, binaryFlag, maybeParent)))
                   nonuserDeclarations
-      visitParent visited accumulator parentName = do
+      visitParent visited parentName = do
         if elem parentName visited
           then fail $ "Cycle in lexer parents: " ++ (englishList visited)
           else return ()
@@ -292,16 +292,20 @@ processLexerDeclarations = do
                                    ++ " referenced as a parent but defined as USER."
                        else fail $ "Lexer " ++ parentName
                                    ++ " referenced as a parent but not defined."
-          Just parentDefinition -> do
-            return accumulator
+          Just (parentDefinition, _, maybeGrandparent) -> do
+            case maybeGrandparent of
+              Nothing -> return parentDefinition
+              Just grandparentName -> do
+                recursiveResult <- visitParent (visited ++ [parentName]) grandparentName
+                return $ parentDefinition ++ recursiveResult
       definitionIncludingParents baseName = do
         let (definition, binaryFlag, maybeParent)
                 = fromJust $ Map.lookup baseName nameDefinitionMap
         case maybeParent of
           Nothing -> return (baseName, binaryFlag, definition)
           Just parentName -> do
-            recursiveResult <- visitParent [baseName] definition parentName
-            return (baseName, binaryFlag, recursiveResult)
+            recursiveResult <- visitParent [baseName] parentName
+            return (baseName, binaryFlag, definition ++ recursiveResult)
   nonuserNamesAndDefinitions <- mapM definitionIncludingParents
                                      $ Map.keys nameDefinitionMap
   let lexerInformation = LexerInformation {
@@ -376,9 +380,11 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                                   ++ "."
                            Right regexp -> return regexp)
                       regexpStringResultTuples
-      nfas <- mapM (\(regexp, result) -> regexpToNFA regexp result)
-                   $ zip regexps (map (\(_, _, result) -> result)
-                                      regexpStringResultTuples)
+      nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp (priority, result))
+                   $ zip3 regexps
+                          [0..]
+                          (map (\(_, _, result) -> result)
+                               regexpStringResultTuples)
       let combinedNFA = combineNFAs nfas
       eitherMessageDFA <- nfaToDFA combinedNFA
       case eitherMessageDFA of
@@ -394,9 +400,11 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                                   ++ "."
                            Right regexp -> return regexp)
                       regexpStringResultTuples
-      nfas <- mapM (\(regexp, result) -> regexpToNFA regexp result)
-                   $ zip regexps (map (\(_, _, result) -> result)
-                                      regexpStringResultTuples)
+      nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp (priority, result))
+                   $ zip3 regexps
+                          [0..]
+                          (map (\(_, _, result) -> result)
+                               regexpStringResultTuples)
       let combinedNFA = combineNFAs nfas
       eitherMessageDFA <- nfaToDFA combinedNFA
       case eitherMessageDFA of

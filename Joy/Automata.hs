@@ -12,6 +12,7 @@ module Joy.Automata (
     where
 
 import Control.Monad.Error
+import Data.Function
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -179,7 +180,7 @@ instance Error AutomatonConversionError where
 
 nfaToDFA :: forall m content stateData transitionData .
             (MonadUnique m, Ord content, Bounded content, Enum content)
-         => (NFA (EnumSet content) (Maybe stateData) transitionData)
+         => (NFA (EnumSet content) (Maybe (Int, stateData)) transitionData)
          -> m (Either String (DFA (EnumSet content) (Maybe stateData) ()))
 nfaToDFA nfa = do
     let convertQueue :: [Set UniqueID]
@@ -223,20 +224,23 @@ nfaToDFA nfa = do
                                   return (dfa, targetDFAState)
                                 Nothing -> do
                                   let possibleActions
-                                        = foldl (\accumulator maybeAction ->
-                                                  case maybeAction of
-                                                    Nothing -> accumulator
-                                                    Just action -> accumulator
-                                                                   ++ [action])
-                                                []
-                                                $ map (\state
-                                                        -> automatonStateData nfa state)
-                                                      $ Set.toList targetNFAStates
+                                        = sortBy
+                                          (compare `on` fst)
+                                          $ foldl (\accumulator maybeAction ->
+                                                    case maybeAction of
+                                                      Nothing -> accumulator
+                                                      Just action -> accumulator
+                                                                     ++ [action])
+                                                  []
+                                                  $ map (\state
+                                                          -> automatonStateData nfa state)
+                                                        $ Set.toList targetNFAStates
                                   maybeAction
                                       <- case possibleActions of
                                            [] -> return Nothing
-                                           [action] -> return $ Just action
-                                           _ -> fail $ "Conflict in lexer"
+                                           _ -> return $ Just
+                                                       $ snd
+                                                       $ head possibleActions
                                   let accepting = any (automatonStateAccepting nfa)
                                                       $ Set.toList targetNFAStates
                                   (dfa, targetDFAState) <- automatonAddState dfa
@@ -271,7 +275,7 @@ nfaToDFA nfa = do
               then queue
               else queue ++ [newNFAStateSet]
         
-        getTransition :: (NFA (EnumSet content) (Maybe stateData) transitionData)
+        getTransition :: (NFA (EnumSet content) (Maybe (Int, stateData)) transitionData)
                       -> UniqueID
                       -> content
                       -> (Maybe [(UniqueID, transitionData)])
