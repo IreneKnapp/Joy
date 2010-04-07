@@ -255,10 +255,10 @@ nfaToDFA nfa = do
                                                                          enumSet
                                                                          ()
                                   return (dfa, targetDFAState)
+                       queue <- return $ enqueue queue stateSetMap targetNFAStates
                        stateSetMap <- return $ Map.insert targetNFAStates
                                                           targetDFAState
                                                           stateSetMap
-                       queue <- return $ enqueue queue stateSetMap targetNFAStates
                        return (dfa, stateSetMap, queue)
                      else return (dfa, stateSetMap, queue))
                 (dfa, stateSetMap, queue)
