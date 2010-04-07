@@ -10,19 +10,29 @@ maintainer: dankna@gmail.com
 homepage: http://dankna.com/software/
 bug-reports: http://dankna.com/issues/create/
 category: Language, Database
-synopsis: Parser generator
+synopsis: Integrated lexer/parser generator
 description:
-  This is a parser generaor for Haskell.  Compared to Happy, it
-  does not support unification or GLR, but does support shift-actions,
-  actions which happen in the middle of a production.
+  This is a lexer and parser generaor for Haskell.  Compared to Alex,
+  it supports positive and negative lookahead and lookbehind assertions,
+  and subexpression capturing.  Compared to Happy, it does not support
+  unification or GLR, but does support shift-actions, actions which
+  happen in the middle of a production.
 
-Executable:
-  main-is: Main
+Executable joy
+  main-is: Main.hs
   other-modules: Joy.Automata,
-                 Joy.EnumSets,
+                 Joy.Client,
+                 Joy.Documentation,
+                 Joy.EnumSet,
+                 Joy.Generation,
                  Joy.LALR1,
-  		 Joy.Specification
+                 Joy.Regexp,
+                 Joy.Specification,
+                 Joy.Uniqueness
+  build-tools: happy >= 1.18.4
   build-depends: base >= 4.1 && < 5,
+                 array >= 0.3.0.0,
+                 containers >= 0.3.0.0,
                  mtl >= 1.1.0.2,
                  template-haskell,
                  

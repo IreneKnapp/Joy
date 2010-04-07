@@ -11,13 +11,13 @@ LEXER NAME cppLexer
 
 | SUBEXPRESSION hex '[0-9a-fA-F]'
 | SUBEXPRESSION shortCharacterName
-  '\\u(\g<hex>\g<hex>\g<hex>\g<hex>)'
+  '\\u({hex}{hex}{hex}{hex})'
   { readHexEscape $1 }
 | SUBEXPRESSION longCharacterName
-  '\\U(\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>\g<hex>)'
+  '\\U({hex}{hex}{hex}{hex}{hex}{hex}{hex}{hex})'
   { readHexEscape $1 }
 | SUBEXPRESSION ucn
-  '\g<shortCharacterName>|\g<longCharacterName>'
+  '{shortCharacterName}|{longCharacterName}'
 
 | SUBEXPRESSION simpleEscape
   '\\''|\\"|\\?|\\\\|\\a|\\b|\\f|\\n|\\r|\\t|\\v'
@@ -25,18 +25,18 @@ LEXER NAME cppLexer
   '\\([0-7]([0-7][0-7]?)?)'
   { readOctalEscape $1 }
 | SUBEXPRESSION hexadecimalEscape
-  '\\x(\g<hex>+)'
+  '\\x({hex}+)'
   { readHexEscape $1 }
 | SUBEXPRESSION escape
-  '\g<simpleEscape>|\g<octalEscape>|\g<hexadecimalEscape>|\g<ucn>'
+  '{simpleEscape}|{octalEscape}|{hexadecimalEscape}|{ucn}'
 
-| '([a-zA-Z_]|\g<ucn>)([a-zA-Z0-9_]|\g<ucn>)*'
+| '([a-zA-Z_]|{ucn})([a-zA-Z0-9_]|{ucn})*'
                                          { CPPIdentifier $0 }
 | '\.?[0-9]([a-zA-Z_0-9.]|[eEpP][+-])*'  { CPPNumber $0 }
-| '''(([^''\\\n]|\g<escape>)*)'''        { CPPCharacterConstant False $1 }
-| 'L''(([^''\\\n]|\g<escape>)*)'''       { CPPCharacterConstant True $1 }
-| '"(([^"\\\n]|\g<escape>)*)"'           { CPPStringLiteral False $1 }
-| 'L"(([^"\\\n]|\g<escape>)*)"'          { CPPStringLiteral True $1 }
+| '''(([^''\\\n]|{escape})*)'''        { CPPCharacterConstant False $1 }
+| 'L''(([^''\\\n]|{escape})*)'''       { CPPCharacterConstant True $1 }
+| '"(([^"\\\n]|{escape})*)"'           { CPPStringLiteral False $1 }
+| 'L"(([^"\\\n]|{escape})*)"'          { CPPStringLiteral True $1 }
 
 | SUBEXPRESSION punctuatorsA
   '\[|\]|\(|\)|\{|\}|\.|->|++|--|&|\*|\+|-|~|!|/|%|<<|>>|<|>|<=|>=|==|!='
@@ -44,7 +44,7 @@ LEXER NAME cppLexer
   '^|\||&&|\|\||\?|:|;|...|=|\*=|/=|%=|\+=|-=|<<=|>>=|&=|^=|\|=|,'
 | SUBEXPRESSION punctuatorsC
   '#|##|<:|:>|<%|%>|%:|%:%:'
-| '\g<punctuatorsA>|\g<punctuatorsB>|\g<punctuatorsC>'
+| '{punctuatorsA}|{punctuatorsB}|{punctuatorsC}'
                                          { CPPPunctuator $0 }
 
 | '( |\t|\n|\v|\f)+'                     { CPPWhitespace $0 }
