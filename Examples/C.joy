@@ -2,6 +2,8 @@ LANGUAGE Joy/1.0 Haskell
 module Main where
 
 import Control.Monad.Error
+import Data.Char
+import Numeric
 
 --
 MONAD { Parse }
@@ -21,6 +23,7 @@ LEXER NAME cppLexer
 
 | SUBEXPRESSION simpleEscape
   '\\''|\\"|\\?|\\\\|\\a|\\b|\\f|\\n|\\r|\\t|\\v'
+  { readSimpleEscape $0 }
 | SUBEXPRESSION octalEscape
   '\\([0-7]([0-7][0-7]?)?)'
   { readOctalEscape $1 }
@@ -32,7 +35,7 @@ LEXER NAME cppLexer
 
 | '([a-zA-Z_]|{ucn})([a-zA-Z0-9_]|{ucn})*'
                                          { CPPIdentifier $0 }
-| '\.?[0-9]([a-zA-Z_0-9.]|[eEpP][+-])*'  { CPPNumber $0 }
+| '\.?[0-9]([a-zA-Z_0-9.]|[eEpP][+\-])*' { CPPNumber $0 }
 | '''(([^''\\\n]|{escape})*)'''          { CPPCharacterConstant False $1 }
 | 'L''(([^''\\\n]|{escape})*)'''         { CPPCharacterConstant True $1 }
 | '"(([^"\\\n]|{escape})*)"'             { CPPStringLiteral False $1 }
@@ -80,8 +83,26 @@ instance Show ParseError where
     show (ParseError string) = string
 
 
+readSimpleEscape :: String -> String
+readSimpleEscape "\\'" = "'"
+readSimpleEscape "\\\"" = "\""
+readSimpleEscape "\\?" = "?"
+readSimpleEscape "\\\\" = "\\"
+readSimpleEscape "\\a" = "\a"
+readSimpleEscape "\\b" = "\b"
+readSimpleEscape "\\f" = "\f"
+readSimpleEscape "\\n" = "\n"
+readSimpleEscape "\\r" = "\r"
+readSimpleEscape "\\t" = "\t"
+readSimpleEscape "\\v" = "\v"
+
+
+readOctalEscape :: String -> String
+readOctalEscape input = [chr $ readOct input]
+
+
 readHexEscape :: String -> String
-readHexEscape input = ...
+readHexEscape input = [chr $ readHex input]
 
 
 main :: IO ()

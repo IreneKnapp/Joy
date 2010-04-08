@@ -20,6 +20,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
 import Data.Word
+import Numeric
 
 import Joy.Automata
 import Joy.Client
@@ -120,6 +121,9 @@ debugAutomaton :: (Ord content, Bounded content, Enum content,
                -> Generation ()
 debugAutomaton automaton = do
   let toChar c = toEnum $ fromEnum c
+      charToStr c | (isPrint c) && (not $ isSpace c) = [c]
+                  | ord c <= 0xFFFF = "\\u" ++ (showHex (ord c) "")
+                  | otherwise = "\\U" ++ (showHex (ord c) "")
   mapM_ (\state -> do
           let datum = case automatonStateData automaton state of
                         Nothing -> "Nothing"
@@ -137,9 +141,10 @@ debugAutomaton automaton = do
                    liftIO $ putStr "  "
                    mapM_ (\(start, end) -> do
                             if start == end
-                              then liftIO $ putStr $ [toChar start]
+                              then liftIO $ putStr $ charToStr $ toChar start
                               else liftIO $ putStr
-                                       $ [toChar start] ++ "-" ++ [toChar end])
+                                       $ (charToStr $ toChar start)
+                                         ++ "-" ++ (charToStr $ toChar end))
                          $ EnumSet.toList input
                    liftIO $ putStr " ->"
                    mapM_ (\resultState -> do

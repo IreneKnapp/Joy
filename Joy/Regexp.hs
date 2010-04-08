@@ -41,6 +41,10 @@ data (Ord content, Bounded content, Enum content) => Regexp content
     | OneOrMore (Regexp content)
     | Grouped (Regexp content)
     | NamedSubexpression String
+    | PositiveLookahead (Regexp content)
+    | NegativeLookahead (Regexp content)
+    | PositiveLookbehind (Regexp content)
+    | NegativeLookbehind (Regexp content)
 
 
 instance (Ord content, Bounded content, Enum content) => Show (Regexp content) where
@@ -52,6 +56,10 @@ instance (Ord content, Bounded content, Enum content) => Show (Regexp content) w
     show (OneOrMore regexp) = "OneOrMore (" ++ show regexp ++ ")"
     show (Grouped regexp) = "Grouped (" ++ show regexp ++ ")"
     show (NamedSubexpression identifier) = "NamedSubexpression " ++ identifier
+    show (PositiveLookahead regexp) = "PositiveLookahead (" ++ show regexp ++ ")"
+    show (NegativeLookahead regexp) = "NegativeLookahead (" ++ show regexp ++ ")"
+    show (PositiveLookbehind regexp) = "PositiveLookbehind (" ++ show regexp ++ ")"
+    show (NegativeLookbehind regexp) = "NegativeLookbehind (" ++ show regexp ++ ")"
 
 
 data RegexpParseError = RegexpParseError String
@@ -80,6 +88,30 @@ parseRegexp input subexpressionBindings =
                      -> RegexpParse ([Regexp content], [RegexpChar content])
         parseRegexp' 0 accumulator [] = return (reverse accumulator, [])
         parseRegexp' depth _ [] = fail $ "Unbalanced '(' in regexp"
+        parseRegexp' depth accumulator
+                     (Special '(' : Special '?' : Special '=' : rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (PositiveLookahead
+                              $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth accumulator
+                     (Special '(' : Special '?' : Special '!' : rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (NegativeLookahead
+                              $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth accumulator
+                     (Special '(' : Special '?' : Special '<' : Special '=' : rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (PositiveLookbehind
+                              $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
+        parseRegexp' depth accumulator
+                     (Special '(' : Special '?' : Special '<' : Special '!' : rest) = do
+          (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
+          let accumulator' = (NegativeLookbehind
+                              $ mkSequenceRegexp recursiveResult) : accumulator
+          parseRegexp' depth accumulator' rest
         parseRegexp' depth accumulator (Special '(':rest) = do
           (recursiveResult, rest) <- parseRegexp' (depth+1) [] rest
           let accumulator' = (Grouped $ mkSequenceRegexp recursiveResult) : accumulator
@@ -223,6 +255,16 @@ parseRegexp input subexpressionBindings =
             = return ([Special '?'], NormalState, rest)
         scanRegexpChar NormalState ('|':rest)
             = return ([Special '|'], NormalState, rest)
+        scanRegexpChar NormalState ('(':'?':'=':rest)
+            = return ([Special '(', Special '?', Special '='], NormalState, rest)
+        scanRegexpChar NormalState ('(':'?':'!':rest)
+            = return ([Special '(', Special '?', Special '!'], NormalState, rest)
+        scanRegexpChar NormalState ('(':'?':'<':'=':rest)
+            = return ([Special '(', Special '?', Special '<', Special '='],
+                      NormalState, rest)
+        scanRegexpChar NormalState ('(':'?':'<':'!':rest)
+            = return ([Special '(', Special '?', Special '<', Special '!'],
+                      NormalState, rest)
         scanRegexpChar NormalState ('(':rest)
             = return ([Special '('], NormalState, rest)
         scanRegexpChar NormalState (')':rest)
@@ -334,6 +376,9 @@ regexpToNFA regexp datum = do
                      => (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
                      -> (Regexp content)
                      -> m (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
+        regexpToNFA' (nfa, tailStates) (Grouped regexp) = do
+          (nfa, tailStates) <- regexpToNFA' (nfa, tailStates) regexp
+          return (nfa, tailStates)
         regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) = do
           (nfa, newState) <- automatonAddState nfa Nothing
           let nfa' = foldl (\nfa tailState -> automatonAddTransition nfa
@@ -401,6 +446,8 @@ regexpToNFA regexp datum = do
           return (nfa', newTailStates)
         regexpToNFA' (nfa, initialTailStates) (NamedSubexpression identifier) = do
           return (nfa, initialTailStates)
+        regexpToNFA' (nfa, initialTailStates) regexp = do
+          trace (show regexp) (return (nfa, initialTailStates))
     emptyNFA <- emptyAutomaton Nothing
     (fullNFA, fullNFATailStates) <- regexpToNFA' (emptyNFA, automatonStates emptyNFA)
                                                  regexp

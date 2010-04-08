@@ -208,7 +208,6 @@ nfaToDFA nfa = do
                              $ map
                                (\sourceNFAState ->
                                  map fst
-                                 $ fromJust
                                  $ getTransition nfa sourceNFAState testInput)
                                $ Set.toList sourceNFAStates
                    if Set.size targetNFAStates > 0
@@ -278,16 +277,14 @@ nfaToDFA nfa = do
         getTransition :: (NFA (EnumSet content) (Maybe (Int, stateData)) transitionData)
                       -> UniqueID
                       -> content
-                      -> (Maybe [(UniqueID, transitionData)])
+                      -> [(UniqueID, transitionData)]
         getTransition nfa sourceState input =
-          foldl (\maybeCumulativeResult (enumSet, transitionResult) ->
+          foldl (\cumulativeResult (enumSet, transitionResult) ->
                   let partialResult = if enumInSet enumSet input
                                         then transitionResult
                                         else []
-                  in case maybeCumulativeResult of
-                       Just cumulativeResult -> Just $ cumulativeResult ++ partialResult
-                       Nothing -> Just partialResult)
-                Nothing
+                  in cumulativeResult ++ partialResult)
+                []
                 $ Map.toList $ automatonTransitionMap nfa sourceState
         
         convertAll :: ErrorT AutomatonConversionError m
