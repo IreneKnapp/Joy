@@ -112,9 +112,13 @@ DeclarationList :: { [Declaration] }
         (KeywordToken lineNumber, ClientCode _ body)
           -> $1 ++ [TokensDeclaration lineNumber (ClientType body) []] }
     | DeclarationList token type clientCode names TokenDefinitionList
-    { case ($2, $4) of
-        (KeywordToken lineNumber, ClientCode _ body)
-          -> $1 ++ [TokensDeclaration lineNumber (ClientType body) $6] }
+    {% do
+	case ($6) of
+          [] -> throwParseError $ "TOKENS declaration gives NAMES but no items."
+          _ -> return ()
+	return $ case ($2, $4) of
+         (KeywordToken lineNumber, ClientCode _ body)
+           -> $1 ++ [TokensDeclaration lineNumber (ClientType body) $6] }
     
     | DeclarationList NonterminalDeclaration
     { $1 ++ [$2] }
