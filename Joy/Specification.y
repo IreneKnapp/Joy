@@ -107,6 +107,10 @@ DeclarationList :: { [Declaration] }
         ((Just lineNumber, maybeInitial), (_, maybeBinary), _)
           -> $1 ++ [LexerDeclaration lineNumber maybeInitial maybeBinary $5 $6 $7] }
     
+    | DeclarationList token type clientCode
+    { case ($2, $4) of
+        (KeywordToken lineNumber, ClientCode _ body)
+          -> $1 ++ [TokensDeclaration lineNumber (ClientType body) []] }
     | DeclarationList token type clientCode names TokenDefinitionList
     { case ($2, $4) of
         (KeywordToken lineNumber, ClientCode _ body)

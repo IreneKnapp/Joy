@@ -2,12 +2,15 @@
              TypeSynonymInstances #-}
 module Joy.Generation (
                        Generation(..),
-                       mkGenerationState,
                        GenerationError(..),
                        GenerationState(..),
                        LexerInformation(..),
                        Lexer(..),
                        AnyLexer(..),
+                       mkGenerationState,
+                       runGeneration,
+                       suspendGeneration,
+                       reenterGeneration,
                        generate
                       )
     where
@@ -20,8 +23,12 @@ import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.Time
+import Data.Time.Clock.POSIX
 import Data.Word
 import Numeric
+import System.IO
+import System.Locale
 
 import Joy.Automata
 import Joy.Client
@@ -50,27 +57,13 @@ data GenerationState = GenerationState {
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
-        generationStateCompiledLexers :: [(String, Bool, AnyLexer)],
-        generationStateTerminals :: [GrammarSymbol],
-        generationStateNonterminals :: [GrammarSymbol],
-        generationStateProductions
-            :: [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
-      }
-
-
-mkGenerationState :: FilePath -> FilePath -> GenerationState
-mkGenerationState inputFilename outputFilename
-    = GenerationState {
-        generationStateInputFilename = inputFilename,
-        generationStateOutputFilename = outputFilename,
-        generationStateMaybeSpecification = Nothing,
-        generationStateMaybeMonadType = Nothing,
-        generationStateMaybeLexerInformation = Nothing,
-        generationStateMaybeErrorFunction = Nothing,
-        generationStateCompiledLexers = [],
-        generationStateTerminals = [],
-        generationStateNonterminals = [],
-        generationStateProductions = []
+        generationStateMaybeCompiledLexers :: Maybe [(String, Bool, AnyLexer)],
+        generationStateMaybeTokenType :: Maybe ClientType,
+        generationStateMaybeAnyParsersSpecified :: Maybe Bool,
+        generationStateMaybeTerminals :: Maybe [GrammarSymbol],
+        generationStateMaybeNonterminals :: Maybe [GrammarSymbol],
+        generationStateMaybeProductions
+            :: Maybe [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
       }
 
 
@@ -86,6 +79,42 @@ type Lexer content = DFA (EnumSet content) (Maybe ClientExpression) ()
 
 data AnyLexer = CharLexer (Lexer Char)
               | Word8Lexer (Lexer Word8)
+
+
+mkGenerationState :: FilePath -> FilePath -> GenerationState
+mkGenerationState inputFilename outputFilename
+    = GenerationState {
+        generationStateInputFilename = inputFilename,
+        generationStateOutputFilename = outputFilename,
+        generationStateMaybeSpecification = Nothing,
+        generationStateMaybeMonadType = Nothing,
+        generationStateMaybeLexerInformation = Nothing,
+        generationStateMaybeErrorFunction = Nothing,
+        generationStateMaybeCompiledLexers = Nothing,
+        generationStateMaybeTokenType = Nothing,
+        generationStateMaybeAnyParsersSpecified = Nothing,
+        generationStateMaybeTerminals = Nothing,
+        generationStateMaybeNonterminals = Nothing,
+        generationStateMaybeProductions = Nothing
+      }
+
+
+runGeneration :: (Generation a) -> GenerationState -> IO (Either GenerationError a)
+runGeneration action state = runUniqueT $ flip evalStateT state $ runErrorT action
+
+
+suspendGeneration :: Generation (GenerationState, UniqueState)
+suspendGeneration = do
+  generationState <- get
+  uniqueState <- getUniqueState
+  return (generationState, uniqueState)
+
+
+reenterGeneration :: (GenerationState, UniqueState)
+                  -> (Generation a)
+                  -> IO (Either GenerationError a)
+reenterGeneration (generationState, uniqueState) action
+    = reenterUniqueT uniqueState $ flip evalStateT generationState $ runErrorT action
 
 
 debugSpecification :: Generation ()
@@ -124,7 +153,7 @@ debugEarlyGenerationState = do
 
 debugLexers :: Generation ()
 debugLexers = do
-  GenerationState { generationStateCompiledLexers = lexers } <- get
+  GenerationState { generationStateMaybeCompiledLexers = Just lexers } <- get
   mapM_ (\(name, binaryFlag, lexer) -> do
           liftIO $ putStrLn $ "\nLexer " ++ name
                               ++ (if binaryFlag then " binary" else "")
@@ -192,6 +221,7 @@ generate = do
   -- debugEarlyGenerationState
   compileLexers
   -- debugLexers
+  writeOutput
 
 
 readSpecification :: Generation ()
@@ -210,6 +240,7 @@ processDeclarations = do
   processMonadDeclaration
   processErrorDeclaration
   processLexerDeclarations
+  bootstrapProcessNonterminalDeclarations
   processTokensDeclaration
   processNonterminalDeclarations
 
@@ -370,9 +401,42 @@ processLexerDeclarations = do
           }
 
 
+bootstrapProcessNonterminalDeclarations :: Generation ()
+bootstrapProcessNonterminalDeclarations = do
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                                               NonterminalDeclaration { } -> True
+                                               _ -> False)
+                            $ specificationDeclarations
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
+      haveParsers = foldl (\haveParsers declaration ->
+                            case nonterminalDeclarationParsers declaration of
+                              [] -> haveParsers
+                              _ -> True)
+                          False
+                          declarations
+  state <- get
+  put $ state { generationStateMaybeAnyParsersSpecified = Just haveParsers }
+  return ()
+
+
 processTokensDeclaration :: Generation ()
 processTokensDeclaration = do
-  return ()
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                                TokensDeclaration _ _ _ -> True
+                                _ -> False)
+                            $ specificationDeclarations
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
+  case declarations of
+    [] -> fail $ "Missing TOKENS declaration."
+    [TokensDeclaration _ clientType definitions]
+        -> do
+             put $ state { generationStateMaybeTokenType = Just clientType }
+    _ -> fail $ "Multiple TOKENS declarations, at lines "
+                ++ (englishList $ map (show . location) declarations)
 
 
 processNonterminalDeclarations :: Generation ()
@@ -410,7 +474,9 @@ compileLexers = do
                            compileLexer normalItems subexpressionItems binaryFlag)
                          $ zip definitions binaryFlags
   state <- get
-  put $ state { generationStateCompiledLexers = zip3 names binaryFlags compiledLexers }
+  put $ state { generationStateMaybeCompiledLexers = Just $ zip3 names
+                                                                 binaryFlags
+                                                                 compiledLexers }
   return ()
 
 
@@ -463,3 +529,79 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     True -> do
       dfa <- compileLexer'
       return $ Word8Lexer dfa
+
+
+writeOutput :: Generation ()
+writeOutput = do
+  let writeOutput' file = do
+                outputHeader file
+                outputPrologue file
+                outputLexers file
+                outputEpilogue file
+  GenerationState { generationStateOutputFilename = outputFilename } <- get
+  savedState <- suspendGeneration
+  liftIO $ withFile outputFilename WriteMode
+    (\file -> reenterGeneration savedState $ writeOutput' file)
+  return ()
+
+
+outputHeader :: Handle -> Generation ()
+outputHeader file = do
+  timestamp <- liftIO $ getPOSIXTime
+  GenerationState { generationStateInputFilename = inputFilename } <- get
+  let formattedTimestamp = formatTime defaultTimeLocale
+                                      "%Y-%m-%d %H:%M UTC"
+                                      $ posixSecondsToUTCTime timestamp
+      originalFilename = fromJust $ filePathFileComponent inputFilename
+  liftIO $ hPutStrLn file $ "-- DO NOT EDIT this file; it was automatically generated."
+  liftIO $ hPutStrLn file $ "-- Created by Joy 1.0 from "
+                            ++ originalFilename
+                            ++ " at "
+                            ++ formattedTimestamp
+                            ++ "."
+
+
+outputPrologue :: Handle -> Generation ()
+outputPrologue file = do
+  GenerationState { generationStateMaybeSpecification = Just specification } <- get
+  let ClientRaw prologue = specificationOutputHeader specification
+  liftIO $ hPutStr file prologue
+
+
+outputEpilogue :: Handle -> Generation ()
+outputEpilogue file = do
+  GenerationState { generationStateMaybeSpecification = Just specification } <- get
+  let ClientRaw epilogue = specificationOutputFooter specification
+  liftIO $ hPutStr file epilogue
+
+
+outputLexers :: Handle -> Generation ()
+outputLexers file = do
+  GenerationState { generationStateMaybeCompiledLexers = lexers } <- get
+  mapM_ (\(name, binaryFlag, anyLexer) -> outputLexer file name binaryFlag anyLexer)
+        $ fromJust lexers
+
+
+outputLexer :: Handle -> String -> Bool -> AnyLexer -> Generation ()
+outputLexer file name binaryFlag anyLexer = do
+  state <- get
+  let maybeMonadType = generationStateMaybeMonadType state
+      Just (ClientType tokenType) = generationStateMaybeTokenType state
+  liftIO $ hPutStr file $ name ++ " :: "
+  case maybeMonadType of
+    Nothing -> do
+      liftIO $ hPutStr file $ case binaryFlag of
+                          False -> "String"
+                          True -> "[Word8]"
+      liftIO $ hPutStr file $ " -> ["
+      liftIO $ hPutStr file $ trim tokenType
+      liftIO $ hPutStr file $ "]\n"
+      liftIO $ hPutStr file $ name ++ " input =\n"
+    Just (ClientType monadType) -> do
+      liftIO $ hPutStr file $ trim monadType
+      liftIO $ hPutStr file $ " (Maybe ("
+      liftIO $ hPutStr file $ trim tokenType
+      liftIO $ hPutStr file $ "))\n"
+      liftIO $ hPutStr file $ name ++ " = do\n"
+  liftIO $ hPutStr file $ "\n"
+  liftIO $ hPutStr file $ "\n"

@@ -8,6 +8,7 @@ import Numeric
 --
 MONAD { Parse }
 ERROR { parseError }
+TOKEN TYPE { CPPToken }
 
 LEXER NAME cppLexer
 
