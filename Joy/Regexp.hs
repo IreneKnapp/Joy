@@ -26,6 +26,7 @@ import Numeric
 import Prelude hiding (all, concat, elem, foldl)
 
 import Joy.Automata
+import Joy.Documentation
 import Joy.EnumSet
 import Joy.Uniqueness
 
@@ -241,6 +242,10 @@ parseRegexp input binaryMode =
             = return ([Normal $ fromChar '('], NormalState, rest)
         scanRegexpChar NormalState ('\\':')':rest)
             = return ([Normal $ fromChar ')'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'{':rest)
+            = return ([Normal $ fromChar '{'], NormalState, rest)
+        scanRegexpChar NormalState ('\\':'}':rest)
+            = return ([Normal $ fromChar '}'], NormalState, rest)
         scanRegexpChar SetState ('\\':'-':rest)
             = return ([Normal $ fromChar '-'], SetState, rest)
         scanRegexpChar state ('\\':'[':rest)
@@ -379,19 +384,21 @@ mkOneOrMoreRegexp regexp = OneOrMore regexp
 
 
 regexpToNFA
-    :: (MonadUnique m, Ord content, Bounded content, Enum content)
+    :: forall m content stateData
+       . (MonadUnique m, Ord content, Bounded content, Enum content)
     => (Regexp content)
-    -> stateData
-    -> m (NFA (EnumSet content) (Maybe stateData) ())
-regexpToNFA regexp datum = do
-    let regexpToNFA' :: (MonadUnique m, Ord content, Bounded content, Enum content)
-                     => (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
+    -> (Map String (Regexp content, Maybe stateData))
+    -> (Int, stateData)
+    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) ())
+regexpToNFA regexp subexpressionBindingMap datum = do
+    let regexpToNFA' :: (NFA (EnumSet content) (Maybe (Int, stateData)) (), [UniqueID])
                      -> (Regexp content)
-                     -> m (NFA (EnumSet content) (Maybe stateData) (), [UniqueID])
-        regexpToNFA' (nfa, tailStates) (Grouped regexp) = do
-          (nfa, tailStates) <- regexpToNFA' (nfa, tailStates) regexp
+                     -> [String]
+                     -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (), [UniqueID])
+        regexpToNFA' (nfa, tailStates) (Grouped regexp) visited = do
+          (nfa, tailStates) <- regexpToNFA' (nfa, tailStates) regexp visited
           return (nfa, tailStates)
-        regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) = do
+        regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) visited = do
           (nfa, newState) <- automatonAddState nfa Nothing
           let nfa' = foldl (\nfa tailState -> automatonAddTransition nfa
                                                                      tailState
@@ -401,23 +408,26 @@ regexpToNFA regexp datum = do
                            nfa
                            tailStates
           return (nfa', [newState])
-        regexpToNFA' (nfa, initialTailStates) (Sequence regexps) = do
-          foldlM regexpToNFA'
+        regexpToNFA' (nfa, initialTailStates) (Sequence regexps) visited = do
+          foldlM (\(nfa, tailStates) regexp
+                      -> regexpToNFA' (nfa, tailStates) regexp visited)
                  (nfa, initialTailStates)
                  regexps
-        regexpToNFA' (nfa, initialTailStates) (Alternation regexps) = do
+        regexpToNFA' (nfa, initialTailStates) (Alternation regexps) visited = do
           foldlM (\(nfa, tailStates) regexp -> do
-                   (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp
+                   (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates)
+                                                        regexp
+                                                        visited
                    return (nfa, concat [tailStates, newTailStates]))
                  (nfa, [])
                  regexps
-        regexpToNFA' (nfa, initialTailStates) (ZeroOrOne regexp) = do
-          (nfa', newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp
+        regexpToNFA' (nfa, initialTailStates) (ZeroOrOne regexp) visited = do
+          (nfa', newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
           return $ (nfa', concat [initialTailStates, newTailStates])
-        regexpToNFA' (nfa, initialTailStates) (ZeroOrMore regexp) = do
+        regexpToNFA' (nfa, initialTailStates) (ZeroOrMore regexp) visited = do
           let exampleTailState = head initialTailStates
               preexistingTransitions = automatonTransitionMap nfa exampleTailState
-          (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp
+          (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
           let newTransitions = automatonTransitionMap nfa exampleTailState
               exampleTransitions = newTransitions Map.\\ preexistingTransitions
               nfa' = foldl (\nfa (enumSet, resultingStates) ->
@@ -435,10 +445,10 @@ regexpToNFA regexp datum = do
                            nfa
                            $ Map.toList exampleTransitions
           return $ (nfa', concat [initialTailStates, newTailStates])
-        regexpToNFA' (nfa, initialTailStates) (OneOrMore regexp) = do
+        regexpToNFA' (nfa, initialTailStates) (OneOrMore regexp) visited = do
           let exampleTailState = head initialTailStates
               preexistingTransitions = automatonTransitionMap nfa exampleTailState
-          (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp
+          (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
           let newTransitions = automatonTransitionMap nfa exampleTailState
               exampleTransitions = newTransitions Map.\\ preexistingTransitions
               nfa' = foldl (\nfa (enumSet, resultingStates) ->
@@ -456,13 +466,26 @@ regexpToNFA regexp datum = do
                            nfa
                            $ Map.toList exampleTransitions
           return (nfa', newTailStates)
-        regexpToNFA' (nfa, initialTailStates) (NamedSubexpression identifier) = do
-          return (nfa, initialTailStates)
-        regexpToNFA' (nfa, initialTailStates) regexp = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (NamedSubexpression identifier)
+                     visited = do
+          if elem identifier visited
+            then fail $ "Recursive subexpressions in regexp: "
+                        ++ (englishList $ visited ++ [identifier])
+            else do
+              let maybeSubexpression = Map.lookup identifier subexpressionBindingMap
+              case maybeSubexpression of
+                Nothing -> fail $ "Subexpression " ++ identifier ++ " not found."
+                Just (subexpression, maybeExpression) -> do
+                  regexpToNFA' (nfa, initialTailStates)
+                               subexpression
+                               (visited ++ [identifier])
+        regexpToNFA' (nfa, initialTailStates) regexp visited = do
           trace (show regexp) (return (nfa, initialTailStates))
     emptyNFA <- emptyAutomaton Nothing
     (fullNFA, fullNFATailStates) <- regexpToNFA' (emptyNFA, automatonStates emptyNFA)
                                                  regexp
+                                                 []
     fullNFA <- foldlM (\nfa tailState -> do
                         let nfa' = automatonSetStateAccepting nfa tailState True
                             nfa'' = automatonSetStateData nfa' tailState $ Just datum

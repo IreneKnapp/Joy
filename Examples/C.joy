@@ -41,7 +41,7 @@ LEXER NAME cppLexer
 | 'L"(([^"\\\n]|{escape})*)"'            { CPPStringLiteral True $1 }
 
 | SUBEXPRESSION punctuatorsA
-  '\[|\]|\(|\)|\{|\}|\.|->|++|--|&|\*|\+|-|~|!|/|%|<<|>>|<|>|<=|>=|==|!='
+  '\[|\]|\(|\)|\{|\}|\.|->|\+\+|--|&|\*|\+|-|~|!|/|%|<<|>>|<|>|<=|>=|==|!='
 | SUBEXPRESSION punctuatorsB
   '^|\||&&|\|\||\?|:|;|...|=|\*=|/=|%=|\+=|-=|<<=|>>=|&=|^=|\|=|,'
 | SUBEXPRESSION punctuatorsC

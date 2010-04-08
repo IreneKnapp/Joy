@@ -128,6 +128,7 @@ debugAutomaton automaton = do
       charToStr '\f' = "\\f"
       charToStr '\v' = "\\v"
       charToStr '\t' = "\\t"
+      charToStr '\\' = "\\\\"
       charToStr c | (isPrint c) && (not $ isSpace c) = [c]
                   | ord c <= 0xFF = "\\x" ++ (padToLength 2 $ showHex (ord c) "")
                   | ord c <= 0xFFFF = "\\u" ++ (padToLength 4 $ showHex (ord c) "")
@@ -383,46 +384,47 @@ compileLexer :: [(LineNumber, String, ClientExpression)]
              -> Bool
              -> Generation AnyLexer
 compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
+  let attempt function lineNumber = do
+        let eitherErrorResult = function
+        case eitherErrorResult of
+          Left message -> fail $ message ++ " at line " ++ (show lineNumber) ++ "."
+          Right result -> return result
+      
+      compileLexer' :: (Ord content, Bounded content, Enum content)
+                    => Generation (DFA (EnumSet content) (Maybe ClientExpression) ())
+      compileLexer' = do
+        regexps <- mapM (\(lineNumber, regexpString, _)
+                             -> attempt (parseRegexp regexpString binaryFlag)
+                                        lineNumber)
+                        regexpStringResultTuples
+        subexpressions
+            <- mapM (\(lineNumber, _, regexpString, _)
+                         -> attempt (parseRegexp regexpString binaryFlag)
+                                    lineNumber)
+                    subexpressionTuples
+        let subexpressionBindingMap
+                = Map.fromList $ zip (map (\(_, name, _, _) -> name)
+                                          subexpressionTuples)
+                                     $ zip subexpressions
+                                           (map (\(_, _, _, maybeExpression)
+                                                     -> maybeExpression)
+                                                subexpressionTuples)
+        nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp
+                                                                 subexpressionBindingMap
+                                                                 (priority, result))
+                     $ zip3 regexps
+                            [0..]
+                            (map (\(_, _, result) -> result)
+                                 regexpStringResultTuples)
+        let combinedNFA = combineNFAs nfas
+        eitherMessageDFA <- nfaToDFA combinedNFA
+        case eitherMessageDFA of
+          Left message -> fail message
+          Right dfa -> return dfa
   case binaryFlag of
     False -> do
-      regexps <- mapM (\(lineNumber, regexpString, _) -> do
-                         let eitherErrorRegexp = parseRegexp regexpString
-                                                             binaryFlag
-                         case eitherErrorRegexp of
-                           Left message -> fail $ message
-                                                  ++ " at line "
-                                                  ++ (show lineNumber)
-                                                  ++ "."
-                           Right regexp -> return regexp)
-                      regexpStringResultTuples
-      nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp (priority, result))
-                   $ zip3 regexps
-                          [0..]
-                          (map (\(_, _, result) -> result)
-                               regexpStringResultTuples)
-      let combinedNFA = combineNFAs nfas
-      eitherMessageDFA <- nfaToDFA combinedNFA
-      case eitherMessageDFA of
-        Left message -> fail message
-        Right dfa -> return $ CharLexer dfa
+      dfa <- compileLexer'
+      return $ CharLexer dfa
     True -> do
-      regexps <- mapM (\(lineNumber, regexpString, _) -> do
-                         let eitherErrorRegexp = parseRegexp regexpString
-                                                             binaryFlag
-                         case eitherErrorRegexp of
-                           Left message -> fail $ message
-                                                  ++ " at line "
-                                                  ++ (show lineNumber)
-                                                  ++ "."
-                           Right regexp -> return regexp)
-                      regexpStringResultTuples
-      nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp (priority, result))
-                   $ zip3 regexps
-                          [0..]
-                          (map (\(_, _, result) -> result)
-                               regexpStringResultTuples)
-      let combinedNFA = combineNFAs nfas
-      eitherMessageDFA <- nfaToDFA combinedNFA
-      case eitherMessageDFA of
-        Left message -> fail message
-        Right dfa -> return $ Word8Lexer dfa
+      dfa <- compileLexer'
+      return $ Word8Lexer dfa
