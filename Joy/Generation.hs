@@ -2,6 +2,7 @@
              TypeSynonymInstances #-}
 module Joy.Generation (
                        Generation(..),
+                       mkGenerationState,
                        GenerationError(..),
                        GenerationState(..),
                        LexerInformation(..),
@@ -43,7 +44,9 @@ instance Show GenerationError where
 
 
 data GenerationState = GenerationState {
-        generationStateSpecification :: Specification,
+        generationStateInputFilename :: FilePath,
+        generationStateOutputFilename :: FilePath,
+        generationStateMaybeSpecification :: Maybe Specification,
         generationStateMaybeMonadType :: Maybe ClientType,
         generationStateMaybeLexerInformation :: Maybe LexerInformation,
         generationStateMaybeErrorFunction :: Maybe ClientExpression,
@@ -52,6 +55,22 @@ data GenerationState = GenerationState {
         generationStateNonterminals :: [GrammarSymbol],
         generationStateProductions
             :: [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
+      }
+
+
+mkGenerationState :: FilePath -> FilePath -> GenerationState
+mkGenerationState inputFilename outputFilename
+    = GenerationState {
+        generationStateInputFilename = inputFilename,
+        generationStateOutputFilename = outputFilename,
+        generationStateMaybeSpecification = Nothing,
+        generationStateMaybeMonadType = Nothing,
+        generationStateMaybeLexerInformation = Nothing,
+        generationStateMaybeErrorFunction = Nothing,
+        generationStateCompiledLexers = [],
+        generationStateTerminals = [],
+        generationStateNonterminals = [],
+        generationStateProductions = []
       }
 
 
@@ -167,11 +186,23 @@ debugAutomaton automaton = do
 
 generate :: Generation ()
 generate = do
+  readSpecification
   -- debugSpecification
   processDeclarations
   -- debugEarlyGenerationState
   compileLexers
-  debugLexers
+  -- debugLexers
+
+
+readSpecification :: Generation ()
+readSpecification = do
+  GenerationState { generationStateInputFilename = inputFilename } <- get
+  eitherErrorSpecification <- liftIO $ readSpecificationFile inputFilename
+  case eitherErrorSpecification of
+    Left error -> fail $ show error
+    Right specification -> do
+      state <- get
+      put $ state { generationStateMaybeSpecification = Just specification }
 
 
 processDeclarations :: Generation ()
@@ -190,7 +221,8 @@ processMonadDeclaration = do
                                 MonadDeclaration _ _ -> True
                                 _ -> False)
                             $ specificationDeclarations
-                            $ generationStateSpecification state
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
   case declarations of
     [] -> return ()
     [MonadDeclaration _ clientType]
@@ -206,7 +238,8 @@ processErrorDeclaration = do
                                 ErrorDeclaration _ _ -> True
                                 _ -> False)
                             $ specificationDeclarations
-                            $ generationStateSpecification state
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
   case declarations of
     [] -> return ()
     [ErrorDeclaration _ clientExpression]
@@ -223,13 +256,15 @@ processLexerDeclarations = do
                                LexerDeclaration _ _ _ _ _ _ -> True
                                _ -> False)
                             $ specificationDeclarations
-                            $ generationStateSpecification state
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
       initialDeclarations = filter (\declaration -> case declaration of
                                      UserLexerDeclaration _ True _ -> True
                                      LexerDeclaration _ True _ _ _ _ -> True
                                      _ -> False)
                                    $ specificationDeclarations
-                                   $ generationStateSpecification state
+                                   $ fromJust
+                                   $ generationStateMaybeSpecification state
   case declarations of
     [] -> fail $ "No LEXER or USER LEXER declarations."
     [declaration] -> return ()
