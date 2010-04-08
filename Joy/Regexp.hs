@@ -79,9 +79,9 @@ data RegexpScanState = NormalState | SetState | IdentifierState
 parseRegexp
     :: forall content . (Ord content, Bounded content, Enum content)
     => String
-    -> [(String, String)]
+    -> Bool
     -> Either String (Regexp content)
-parseRegexp input subexpressionBindings =
+parseRegexp input binaryMode =
     let parseRegexp' :: Int
                      -> [Regexp content]
                      -> [RegexpChar content]
@@ -122,7 +122,10 @@ parseRegexp input subexpressionBindings =
             = return (reverse accumulator, rest)
         parseRegexp' depth accumulator (Special '[':Special '^':rest) = do
           (enumSet, rest) <- parseEnumSet emptyEnumSet rest
-          let accumulator' = (mkEnumSetRegexp $ inverseEnumSet enumSet) : accumulator
+          enumSet <- if binaryMode
+                       then return $ inverseEnumSet enumSet
+                       else return $ differenceEnumSet printableEnumSet enumSet
+          let accumulator' = (mkEnumSetRegexp enumSet) : accumulator
           parseRegexp' depth accumulator' rest
         parseRegexp' depth accumulator (Special '[':rest) = do
           (enumSet, rest) <- parseEnumSet emptyEnumSet rest
@@ -138,7 +141,10 @@ parseRegexp input subexpressionBindings =
           let accumulator' = (mkSingletonRegexp c) : accumulator
           parseRegexp' depth accumulator' rest
         parseRegexp' depth accumulator (Special '.':rest) = do
-          let accumulator' = (mkEnumSetRegexp fullEnumSet) : accumulator
+          enumSet <- if binaryMode
+                       then return fullEnumSet
+                       else return printableEnumSet
+          let accumulator' = (mkEnumSetRegexp enumSet) : accumulator
           parseRegexp' depth accumulator' rest
         parseRegexp' depth (mostRecent:older) (Special '?':rest) = do
           let accumulator' = (mkZeroOrOneRegexp mostRecent) : older
@@ -198,6 +204,12 @@ parseRegexp input subexpressionBindings =
             in if value > (fromIntegral $ fromEnum (maxBound :: content))
               then fail "Hex value out of range"
               else return (toEnum $ fromIntegral value, rest)
+        
+        printableEnumSet :: EnumSet content
+        printableEnumSet = unionEnumSet (rangeEnumSet (fromChar ' ') (fromChar '~'))
+                                        (if fromEnum (maxBound :: content) > 0x80
+                                           then rangeEnumSet (toEnum 0x80) maxBound
+                                           else emptyEnumSet)
         
         scanRegexpChar
             :: RegexpScanState

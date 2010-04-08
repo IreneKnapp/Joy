@@ -121,9 +121,18 @@ debugAutomaton :: (Ord content, Bounded content, Enum content,
                -> Generation ()
 debugAutomaton automaton = do
   let toChar c = toEnum $ fromEnum c
+      charToStr '\a' = "\\a"
+      charToStr '\b' = "\\b"
+      charToStr '\n' = "\\n"
+      charToStr '\r' = "\\r"
+      charToStr '\f' = "\\f"
+      charToStr '\v' = "\\v"
+      charToStr '\t' = "\\t"
       charToStr c | (isPrint c) && (not $ isSpace c) = [c]
-                  | ord c <= 0xFFFF = "\\u" ++ (showHex (ord c) "")
-                  | otherwise = "\\U" ++ (showHex (ord c) "")
+                  | ord c <= 0xFF = "\\x" ++ (padToLength 2 $ showHex (ord c) "")
+                  | ord c <= 0xFFFF = "\\u" ++ (padToLength 4 $ showHex (ord c) "")
+                  | otherwise = "\\U" ++ (padToLength 8 $ showHex (ord c) "")
+      padToLength n text = (take (n - length text) $ cycle "0") ++ text
   mapM_ (\state -> do
           let datum = case automatonStateData automaton state of
                         Nothing -> "Nothing"
@@ -378,7 +387,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     False -> do
       regexps <- mapM (\(lineNumber, regexpString, _) -> do
                          let eitherErrorRegexp = parseRegexp regexpString
-                                                             []
+                                                             binaryFlag
                          case eitherErrorRegexp of
                            Left message -> fail $ message
                                                   ++ " at line "
@@ -399,7 +408,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     True -> do
       regexps <- mapM (\(lineNumber, regexpString, _) -> do
                          let eitherErrorRegexp = parseRegexp regexpString
-                                                             []
+                                                             binaryFlag
                          case eitherErrorRegexp of
                            Left message -> fail $ message
                                                   ++ " at line "
