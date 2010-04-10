@@ -2,6 +2,9 @@ module Joy.Documentation (
                           LineNumber(..),
                           Located(..),
                           trim,
+                          numberWidth,
+                          leftPadToWidth,
+                          rightPadToWidth,
                           englishList,
                           filePathFileComponent
                          )
@@ -21,6 +24,20 @@ class Located a where
 
 trim :: String -> String
 trim string = dropWhile isSpace $ reverse $ dropWhile isSpace $ reverse string
+
+
+numberWidth :: (RealFrac a, Floating a) => a -> Int
+numberWidth number = ceiling $ logBase 10 $ 1 + number
+
+
+leftPadToWidth :: Int -> Char -> String -> String
+leftPadToWidth width filler string =
+    take (width - length string) (cycle [filler]) ++ string
+
+
+rightPadToWidth :: Int -> Char -> String -> String
+rightPadToWidth width filler string =
+    string ++ take (width - length string) (cycle [filler])
 
 
 englishList :: [String] -> String

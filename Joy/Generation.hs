@@ -77,8 +77,8 @@ data LexerInformation = LexerInformation {
 
 type Lexer content = DFA (EnumSet content) (Maybe ClientExpression) ()
 
-data AnyLexer = CharLexer (Lexer Char)
-              | Word8Lexer (Lexer Word8)
+data AnyLexer = forall content . (Ord content, Bounded content, Enum content) =>
+                Lexer (Lexer content)
 
 
 mkGenerationState :: FilePath -> FilePath -> GenerationState
@@ -154,12 +154,11 @@ debugEarlyGenerationState = do
 debugLexers :: Generation ()
 debugLexers = do
   GenerationState { generationStateMaybeCompiledLexers = Just lexers } <- get
-  mapM_ (\(name, binaryFlag, lexer) -> do
+  mapM_ (\(name, binaryFlag, anyLexer) -> do
           liftIO $ putStrLn $ "\nLexer " ++ name
                               ++ (if binaryFlag then " binary" else "")
-          case lexer of
-            CharLexer lexer -> debugAutomaton lexer
-            Word8Lexer lexer -> debugAutomaton lexer)
+          Lexer lexer <- return anyLexer
+          debugAutomaton lexer)
         lexers
 
 
@@ -525,10 +524,10 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
   case binaryFlag of
     False -> do
       dfa <- compileLexer'
-      return $ CharLexer dfa
+      return $ Lexer (dfa :: Lexer Char)
     True -> do
       dfa <- compileLexer'
-      return $ Word8Lexer dfa
+      return $ Lexer (dfa :: Lexer Word8)
 
 
 writeOutput :: Generation ()
@@ -559,6 +558,8 @@ outputHeader file = do
                             ++ " at "
                             ++ formattedTimestamp
                             ++ "."
+  liftIO $ hPutStrLn file $ "{-# LANGUAGE TypeSynonymInstances, MultiParamTypeClasses,"
+  liftIO $ hPutStrLn file $ "             FunctionalDependencies #-}"
 
 
 outputPrologue :: Handle -> Generation ()
@@ -566,6 +567,7 @@ outputPrologue file = do
   GenerationState { generationStateMaybeSpecification = Just specification } <- get
   let ClientRaw prologue = specificationOutputHeader specification
   liftIO $ hPutStr file prologue
+  liftIO $ hPutStr file "\n"
 
 
 outputEpilogue :: Handle -> Generation ()
@@ -577,31 +579,119 @@ outputEpilogue file = do
 
 outputLexers :: Handle -> Generation ()
 outputLexers file = do
-  GenerationState { generationStateMaybeCompiledLexers = lexers } <- get
+  GenerationState { generationStateMaybeCompiledLexers = Just lexers } <- get
+  if length lexers == 0
+    then return ()
+    else do
+      let out string = liftIO $ hPutStr file string
+      out $ "class (Monad m, Enum content) => MonadLexer m content | m -> content where\n"
+      out $ "  peekInput :: Int -> m (Maybe content)\n"
+      out $ "  consumeInput :: Int -> m [content]\n"
+      out $ "\n"
+      out $ "\n"
   mapM_ (\(name, binaryFlag, anyLexer) -> outputLexer file name binaryFlag anyLexer)
-        $ fromJust lexers
+        $ lexers
 
 
 outputLexer :: Handle -> String -> Bool -> AnyLexer -> Generation ()
 outputLexer file name binaryFlag anyLexer = do
   state <- get
-  let maybeMonadType = generationStateMaybeMonadType state
+  let out string = liftIO $ hPutStr file string
+      maybeMonadType = generationStateMaybeMonadType state
       Just (ClientType tokenType) = generationStateMaybeTokenType state
-  liftIO $ hPutStr file $ name ++ " :: "
   case maybeMonadType of
     Nothing -> do
-      liftIO $ hPutStr file $ case binaryFlag of
-                          False -> "String"
-                          True -> "[Word8]"
-      liftIO $ hPutStr file $ " -> ["
-      liftIO $ hPutStr file $ trim tokenType
-      liftIO $ hPutStr file $ "]\n"
-      liftIO $ hPutStr file $ name ++ " input =\n"
+      out $ name ++ " :: "
+      out $ case binaryFlag of
+              False -> "String"
+              True -> "[Word8]"
+      out $ " -> ["
+      out $ trim tokenType
+      out $ "]\n"
+      out $ name ++ " input =\n"
     Just (ClientType monadType) -> do
-      liftIO $ hPutStr file $ trim monadType
-      liftIO $ hPutStr file $ " (Maybe ("
-      liftIO $ hPutStr file $ trim tokenType
-      liftIO $ hPutStr file $ "))\n"
-      liftIO $ hPutStr file $ name ++ " = do\n"
-  liftIO $ hPutStr file $ "\n"
-  liftIO $ hPutStr file $ "\n"
+      out $ name ++ " :: "
+      out $ trim monadType
+      out $ " (Maybe ("
+      out $ trim tokenType
+      out $ "))\n"
+      out $ name ++ " = do\n"
+      out $ "  let lex :: Int -> Int -> (Maybe (Int, Int)) -> "
+      out $ trim monadType
+      out $ " (Maybe ("
+      out $ trim tokenType
+      out $ "))\n"
+      out $ "      lex offset state maybeBestMatch = do\n"
+      out $ "        maybeC <- peekInput offset\n"
+      out $ "        case maybeC of\n"
+      out $ "          Nothing -> returnMatch maybeBestMatch\n"
+      out $ "          Just c -> do\n"
+      out $ "            let o = fromEnum c\n"
+      out $ "                shift state = lex (offset+1) state maybeBestMatch\n"
+      out $ "                shiftAndAccept state = lex (offset+1) state\n"
+      out $ "                                           $ Just (offset+1, state)\n"
+      out $ "                reject = returnMatch maybeBestMatch\n"
+      out $ "            case state of\n"
+      Lexer lexer <- return anyLexer
+      let stateNumberIDMap = Map.fromList $ zip [0..] (automatonStates lexer)
+          stateIDNumberMap = Map.fromList $ zip (automatonStates lexer) [0..]
+          stateCount = Map.size stateNumberIDMap
+          stateNumberWidth = numberWidth $ fromIntegral $ stateCount - 1
+      mapM_ (\stateNumber -> do
+               let stateID = fromJust $ Map.lookup stateNumber stateNumberIDMap
+                   transitions
+                       = concat
+                         $ map (\(enumSet, [(targetID, _)]) ->
+                                 let target = fromJust $ Map.lookup targetID
+                                                                    stateIDNumberMap
+                                 in map (\(rangeStart, rangeEnd) ->
+                                          (rangeStart, rangeEnd, target))
+                                        $ EnumSet.toList enumSet)
+                               $ Map.toList $ automatonTransitionMap lexer stateID
+               mapM_ (\((rangeStart, rangeEnd, target), first) -> do
+                        let targetID = fromJust $ Map.lookup target stateNumberIDMap
+                            maybeTargetData = automatonStateData lexer targetID
+                        out $ "              "
+                        if first
+                          then out $ (rightPadToWidth stateNumberWidth ' '
+                                                 $ show stateNumber)
+                          else out $ (rightPadToWidth stateNumberWidth ' ' "")
+                        out $ " | (o >= "
+                        out $ show $ fromEnum rangeStart
+                        out $ ") && (o <= "
+                        out $ show $ fromEnum rangeEnd
+                        out $ ") -> "
+                        case maybeTargetData of
+                          Nothing -> out $ "shift " ++ (show target)
+                          Just _ -> out $ "shiftAndAccept " ++ (show target)
+                        out $ "\n")
+                     $ zip transitions $ [True] ++ cycle [False]
+               out $ "              "
+               if length transitions == 0
+                 then out $ (rightPadToWidth stateNumberWidth ' ' $ show stateNumber)
+                 else out $ (rightPadToWidth stateNumberWidth ' ' "")
+               out $ " | otherwise -> reject\n")
+            [0..stateCount-1]
+      out $ "      returnMatch :: (Maybe (Int, Int)) -> "
+      out $ trim monadType
+      out $ " (Maybe ("
+      out $ trim tokenType
+      out $ "))\n"
+      out $ "      returnMatch Nothing = return Nothing\n"
+      out $ "      returnMatch (Just (inputLength, state)) = do\n"
+      out $ "        joy_0 <- consumeInput inputLength\n"
+      out $ "        case state of\n"
+      mapM_ (\state -> do
+               let stateID = fromJust $ Map.lookup state stateNumberIDMap
+                   maybeTokenConstructor = automatonStateData lexer stateID
+               case maybeTokenConstructor of
+                 Nothing -> return ()
+                 Just tokenConstructor -> do
+                   out $ "          "
+                   out $ (rightPadToWidth stateNumberWidth ' ' $ show state)
+                   out $ " -> return $ Just $ "
+                   out $ trim $ clientExpressionSubstitute $ tokenConstructor
+                   out $ "\n")
+            [0..stateCount-1]
+      out $ "  lex 0 0 Nothing\n"
+  out $ "\n"
