@@ -21,7 +21,9 @@ main = do
   let state = mkGenerationState inputFilename outputFilename
   result <- runUniqueT $ evalStateT (runErrorT generate) state
   case result of
-    Left error -> putStrLn $ show error
+    Left error -> do
+      putStrLn $ show error
+      exitFailure
     Right () -> return ()
 
 

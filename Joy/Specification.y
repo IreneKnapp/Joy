@@ -55,6 +55,7 @@ import Joy.Documentation
         token                 { KeywordToken _ }
         type                  { KeywordType _ }
         user                  { KeywordUser _ }
+        whitespace            { KeywordWhitespace _ }
 %%
 
 Specification :: { Specification }
@@ -162,7 +163,11 @@ LexerDefinitionList :: { [LexerDefinitionItem] }
     | LexerDefinitionList '|' string clientCode
     { case ($3, $4) of
         (StringLiteral lineNumber string, ClientCode _ body)
-          -> $1 ++ [LexerNormalItem lineNumber string (ClientExpression body)] }
+          -> $1 ++ [LexerNormalItem lineNumber string $ ClientExpression body] }
+    | LexerDefinitionList '|' string whitespace
+    { case $3 of
+        StringLiteral lineNumber string
+          -> $1 ++ [LexerWhitespaceItem lineNumber string] }
     | LexerDefinitionList '|' subexpression identifier string
     { case ($3, $4, $5) of
         (KeywordSubexpression lineNumber, Identifier _ name, StringLiteral _ value)
@@ -331,11 +336,13 @@ instance Located Declaration where
 
 data LexerDefinitionItem
     = LexerNormalItem LineNumber String ClientExpression
+    | LexerWhitespaceItem LineNumber String
     | LexerSubexpressionItem LineNumber String String (Maybe ClientExpression)
 
 
 instance Located LexerDefinitionItem where
     location (LexerNormalItem result _ _) = result
+    location (LexerWhitespaceItem result _) = result
     location (LexerSubexpressionItem result _ _ _) = result
 
 
@@ -400,6 +407,7 @@ data Token = EndOfInput LineNumber
            | KeywordToken LineNumber
            | KeywordType LineNumber
            | KeywordUser LineNumber
+           | KeywordWhitespace LineNumber
 instance Located Token where
     location (EndOfInput result) = result
     location (SectionSeparator result) = result
@@ -427,6 +435,7 @@ instance Located Token where
     location (KeywordToken result) = result
     location (KeywordType result) = result
     location (KeywordUser result) = result
+    location (KeywordWhitespace result) = result
 instance Show Token where
     show (EndOfInput _) = "<eof>"
     show (SectionSeparator _) = "--"
@@ -457,6 +466,7 @@ instance Show Token where
     show (KeywordToken _) = "TOKEN"
     show (KeywordType _) = "TYPE"
     show (KeywordUser _) = "USER"
+    show (KeywordWhitespace _) = "WHITESPACE"
 
 readSpecificationFile :: FilePath -> IO (Either SpecificationParseError Specification)
 readSpecificationFile filename = do
@@ -611,6 +621,7 @@ lexer all@(c:rest) = do
                         | identifier == "TOKEN" -> KeywordToken lineNumber
                         | identifier == "TYPE" -> KeywordType lineNumber
                         | identifier == "USER" -> KeywordUser lineNumber
+                        | identifier == "WHITESPACE" -> KeywordWhitespace lineNumber
                         | otherwise -> Identifier lineNumber identifier
         return (token, rest)
       else throwParseError

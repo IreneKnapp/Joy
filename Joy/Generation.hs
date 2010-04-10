@@ -75,7 +75,7 @@ data LexerInformation = LexerInformation {
     }
 
 
-type Lexer content = DFA (EnumSet content) (Maybe ClientExpression) ()
+type Lexer content = DFA (EnumSet content) (Maybe (Maybe ClientExpression)) ()
 
 data AnyLexer = forall content . (Ord content, Bounded content, Enum content) =>
                 Lexer (Lexer content)
@@ -163,7 +163,7 @@ debugLexers = do
 
 
 debugAutomaton :: (Ord content, Bounded content, Enum content,
-                   Automaton a (EnumSet content) (Maybe ClientExpression) ())
+                   Automaton a (EnumSet content) (Maybe (Maybe ClientExpression)) ())
                => a
                -> Generation ()
 debugAutomaton automaton = do
@@ -183,15 +183,16 @@ debugAutomaton automaton = do
       padToLength n text = (take (n - length text) $ cycle "0") ++ text
   mapM_ (\state -> do
           let datum = case automatonStateData automaton state of
-                        Nothing -> "Nothing"
-                        Just (ClientExpression string)
-                            -> "Just {" ++ string ++ "}"
+                        Nothing -> ""
+                        Just Nothing -> " WHITESPACE"
+                        Just (Just (ClientExpression string))
+                            -> " {" ++ string ++ "}"
               start = automatonStateStarting automaton state
               accepting = automatonStateAccepting automaton state
               transitionMap = automatonTransitionMap automaton state
           liftIO $ putStr $ if start then ">" else ""
           liftIO $ putStr $ if accepting then "*" else ""
-          liftIO $ putStrLn $ (show state) ++ " " ++ datum
+          liftIO $ putStrLn $ (show state) ++ datum
           mapM_ (\input -> do
                    let resultStates
                            = fromJust $ Map.lookup input transitionMap
@@ -457,11 +458,16 @@ compileLexers = do
                     $ fromJust maybeInformation
   compiledLexers <- mapM (\(definition, binaryFlag) -> do
                            let normalItems
-                                   = map (\(LexerNormalItem a b c) -> (a, b, c))
-                                         $ filter (\item -> case item of
-                                                    LexerNormalItem _ _ _ -> True
-                                                    _ -> False)
-                                                  definition
+                                 = map (\item ->
+                                          case item of
+                                            (LexerNormalItem a b c) -> (a, b, Just c)
+                                            (LexerWhitespaceItem a b) -> (a, b, Nothing))
+                                       $ filter (\item ->
+                                                   case item of
+                                                     LexerNormalItem _ _ _ -> True
+                                                     LexerWhitespaceItem _ _ -> True
+                                                     _ -> False)
+                                                definition
                                subexpressionItems
                                    = map (\(LexerSubexpressionItem a b c d)
                                               -> (a, b, c, d))
@@ -479,7 +485,7 @@ compileLexers = do
   return ()
 
 
-compileLexer :: [(LineNumber, String, ClientExpression)]
+compileLexer :: [(LineNumber, String, Maybe ClientExpression)]
              -> [(LineNumber, String, String, Maybe ClientExpression)]
              -> Bool
              -> Generation AnyLexer
@@ -491,7 +497,9 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
           Right result -> return result
       
       compileLexer' :: (Ord content, Bounded content, Enum content)
-                    => Generation (DFA (EnumSet content) (Maybe ClientExpression) ())
+                    => Generation (DFA (EnumSet content)
+                                       (Maybe (Maybe ClientExpression))
+                                       ())
       compileLexer' = do
         regexps <- mapM (\(lineNumber, regexpString, _)
                              -> attempt (parseRegexp regexpString binaryFlag)
@@ -507,7 +515,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                           subexpressionTuples)
                                      $ zip subexpressions
                                            (map (\(_, _, _, maybeExpression)
-                                                     -> maybeExpression)
+                                                     -> Just maybeExpression)
                                                 subexpressionTuples)
         nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp
                                                                  subexpressionBindingMap
@@ -616,11 +624,12 @@ outputLexer file name binaryFlag anyLexer = do
       out $ trim tokenType
       out $ "))\n"
       out $ name ++ " = do\n"
-      out $ "  let lex :: Int -> Int -> (Maybe (Int, Int)) -> "
+      out $ "  let lex :: Int -> Int -> (Maybe (Int, Int))\n"
+      out $ "          -> "
       out $ trim monadType
-      out $ " (Maybe ("
+      out $ " (Maybe (Either String ("
       out $ trim tokenType
-      out $ "))\n"
+      out $ ")))\n"
       out $ "      lex offset state maybeBestMatch = do\n"
       out $ "        maybeC <- peekInput offset\n"
       out $ "        case maybeC of\n"
@@ -672,26 +681,42 @@ outputLexer file name binaryFlag anyLexer = do
                  else out $ (rightPadToWidth stateNumberWidth ' ' "")
                out $ " | otherwise -> reject\n")
             [0..stateCount-1]
-      out $ "      returnMatch :: (Maybe (Int, Int)) -> "
+      out $ "      returnMatch :: (Maybe (Int, Int))\n"
+      out $ "                  -> "
       out $ trim monadType
-      out $ " (Maybe ("
+      out $ " (Maybe (Either String ("
       out $ trim tokenType
-      out $ "))\n"
+      out $ ")))\n"
       out $ "      returnMatch Nothing = return Nothing\n"
       out $ "      returnMatch (Just (inputLength, state)) = do\n"
       out $ "        joy_0 <- consumeInput inputLength\n"
       out $ "        case state of\n"
       mapM_ (\state -> do
                let stateID = fromJust $ Map.lookup state stateNumberIDMap
-                   maybeTokenConstructor = automatonStateData lexer stateID
-               case maybeTokenConstructor of
+                   maybeMaybeTokenConstructor = automatonStateData lexer stateID
+               case maybeMaybeTokenConstructor of
                  Nothing -> return ()
-                 Just tokenConstructor -> do
+                 Just maybeTokenConstructor -> do
                    out $ "          "
                    out $ (rightPadToWidth stateNumberWidth ' ' $ show state)
                    out $ " -> return $ Just $ "
-                   out $ trim $ clientExpressionSubstitute $ tokenConstructor
+                   case maybeTokenConstructor of
+                     Nothing -> out $ "Left joy_0"
+                     Just tokenConstructor -> do
+                       out $ "Right $ "
+                       out $ trim $ clientExpressionSubstitute $ tokenConstructor
                    out $ "\n")
             [0..stateCount-1]
-      out $ "  lex 0 0 Nothing\n"
+      out $ "      lexPastWhitespace :: "
+      out $ trim monadType
+      out $ " (Maybe ("
+      out $ trim tokenType
+      out $ "))\n"
+      out $ "      lexPastWhitespace = do\n"
+      out $ "        prospectiveResult <- lex 0 0 Nothing\n"
+      out $ "        case prospectiveResult of\n"
+      out $ "          Nothing -> return Nothing\n"
+      out $ "          Just (Left _) -> lexPastWhitespace\n"
+      out $ "          Just (Right result) -> return $ Just result\n"
+      out $ "  lexPastWhitespace\n"
   out $ "\n"
