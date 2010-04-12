@@ -11,8 +11,10 @@ module Joy.Client (
 import Data.Char
 import Data.List
 
+import Joy.Documentation
 
-data ClientRaw = ClientRaw String
+
+data ClientRaw = ClientRaw LineNumber String
 
 
 data ClientType = ClientType String

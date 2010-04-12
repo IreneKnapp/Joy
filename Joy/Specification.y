@@ -66,13 +66,15 @@ Specification :: { Specification }
       sectionSeparator
       hereFile
     { case ($1, $2, $6) of
-        (LanguageLine _ joyVersion clientLanguage, HereFile _ header, HereFile _ footer)
+        (LanguageLine _ joyVersion clientLanguage,
+         HereFile headerLineNumber header,
+         HereFile footerLineNumber footer)
             -> Specification {
                  specificationJoyVersion = joyVersion,
                  specificationClientLanguage = clientLanguage,
-                 specificationOutputHeader = ClientRaw header,
+                 specificationOutputHeader = ClientRaw headerLineNumber header,
                  specificationDeclarations = $4,
-                 specificationOutputFooter = ClientRaw footer
+                 specificationOutputFooter = ClientRaw footerLineNumber footer
                }
     }
 

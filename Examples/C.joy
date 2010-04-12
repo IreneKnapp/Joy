@@ -51,8 +51,10 @@ LEXER NAME cppLexer
                                          { CPPPunctuator $0 }
 
 | '( |\t|\n|\v|\f)+'                     { CPPWhitespace $0 }
+{-
 | '/\*(((?!\*/).)*)\*/'                  { CPPMultilineComment $1 }
 | '//([^\n]*)(?=\n)'                     { CPPLineComment $1 }
+-}
 | '.'                                    { CPPOther $0 }
 
 LEXER NAME cppHeaderNameLexer PARENT cppLexer
@@ -106,15 +108,24 @@ readHexEscape input = [chr $ readHex input]
 
 
 main :: IO ()
-main = do
+main =
   let loop = do
         line <- getLine
         case line of
           "" -> return ()
           _ -> do
-            eitherErrorResult = runError (cppLexer line)
+            let eitherErrorResult = evalState (runErrorT $
+                                                 let loop = do
+                                                       maybeToken <- cppLexer
+                                                       case maybeToken of
+                                                         Nothing -> return []
+                                                         Just token -> do
+                                                           rest <- loop
+                                                           return $ [token] ++ rest
+                                                 in loop)
+                                              line
             case eitherErrorResult of
               Left error -> putStrLn $ "Parse error: " ++ (show error)
               Right result -> putStrLn $ "Result: " ++ (show result)
             loop
-  loop
+  in loop
