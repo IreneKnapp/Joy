@@ -9,8 +9,6 @@ module Joy.Generation (
                        AnyLexer(..),
                        mkGenerationState,
                        runGeneration,
-                       suspendGeneration,
-                       reenterGeneration,
                        generate
                       )
     where
@@ -27,7 +25,7 @@ import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Word
 import Numeric
-import System.IO
+import System.IO hiding (withFile)
 import System.Locale
 
 import Joy.Automata
@@ -38,6 +36,7 @@ import qualified Joy.EnumSet as EnumSet
 import Joy.Uniqueness
 import Joy.Regexp
 import Joy.Specification
+import Joy.Suspendability (withFile)
 
 
 type Generation = ErrorT GenerationError (StateT GenerationState (UniqueT IO))
@@ -101,20 +100,6 @@ mkGenerationState inputFilename outputFilename
 
 runGeneration :: (Generation a) -> GenerationState -> IO (Either GenerationError a)
 runGeneration action state = runUniqueT $ flip evalStateT state $ runErrorT action
-
-
-suspendGeneration :: Generation (GenerationState, UniqueState)
-suspendGeneration = do
-  generationState <- get
-  uniqueState <- getUniqueState
-  return (generationState, uniqueState)
-
-
-reenterGeneration :: (GenerationState, UniqueState)
-                  -> (Generation a)
-                  -> IO (Either GenerationError a)
-reenterGeneration (generationState, uniqueState) action
-    = reenterUniqueT uniqueState $ flip evalStateT generationState $ runErrorT action
 
 
 debugSpecification :: Generation ()
@@ -547,9 +532,7 @@ writeOutput = do
                 outputLexers file
                 outputEpilogue file
   GenerationState { generationStateOutputFilename = outputFilename } <- get
-  savedState <- suspendGeneration
-  liftIO $ withFile outputFilename WriteMode
-    (\file -> reenterGeneration savedState $ writeOutput' file)
+  withFile outputFilename WriteMode writeOutput'
   return ()
 
 

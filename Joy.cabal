@@ -28,6 +28,7 @@ Executable joy
                  Joy.LALR1,
                  Joy.Regexp,
                  Joy.Specification,
+                 Joy.Suspendability,
                  Joy.Uniqueness
   build-tools: happy >= 1.18.4
   build-depends: base >= 4.1 && < 5,

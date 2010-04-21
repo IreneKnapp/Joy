@@ -3,45 +3,87 @@
 module Joy.Uniqueness (
                        UniqueID,
                        UniqueState,
-                       MonadUnique(..),
+                       MonadUnique(getUniqueID, getUniqueIDForPurpose),
+                       withUniquenessPurpose,
                        UniqueT,
-                       runUniqueT,
-                       reenterUniqueT
+                       runUniqueT
                       )
     where
 
 import Control.Monad.State
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Word
+
+import Joy.Suspendability
 
 
 type UniqueID = Word64
-type UniqueState = UniqueID
+type UniquenessPurpose = UniqueID
+data UniqueState = UniqueState {
+    generalPurposeUniqueness :: UniqueID,
+    specialPurposeUniqueness :: Map UniquenessPurpose UniqueID
+  }
 
 
 class (Monad m) => MonadUnique m where
     getUniqueID :: m UniqueID
-    getUniqueState :: m UniqueState
+    createUniquenessPurpose :: m UniquenessPurpose
+    deleteUniquenessPurpose :: UniquenessPurpose -> m ()
+    getUniqueIDForPurpose :: UniquenessPurpose -> m UniqueID
 
 
-type UniqueT = StateT UniqueID
+withUniquenessPurpose :: (MonadUnique m,
+                          SuspendableMonad m state error (),
+                          SuspendableMonad m state error UniquenessPurpose,
+                          SuspendableMonad m state error a,
+                          MonadIO m)
+                         => (UniquenessPurpose -> m a) -> m a
+withUniquenessPurpose =
+  bracket createUniquenessPurpose
+          deleteUniquenessPurpose
+
+
+type UniqueT = StateT UniqueState
 
 
 instance (Monad m) => MonadUnique (UniqueT m) where
     getUniqueID = do
-      uniqueID <- get
-      put $ uniqueID + 1
+      state <- get
+      let uniqueID = generalPurposeUniqueness state
+      put $ state { generalPurposeUniqueness = uniqueID + 1 }
       return uniqueID
-    getUniqueState = get
+    createUniquenessPurpose = do
+      purpose <- getUniqueID
+      state <- get
+      let purposeMap = specialPurposeUniqueness state
+      put $ state { specialPurposeUniqueness = Map.insert purpose 0 purposeMap }
+      return purpose
+    deleteUniquenessPurpose purpose = do
+      state <- get
+      let purposeMap = specialPurposeUniqueness state
+      put $ state { specialPurposeUniqueness = Map.delete purpose purposeMap }
+    getUniqueIDForPurpose purpose = do
+      state <- get
+      let purposeMap = specialPurposeUniqueness state
+      case Map.lookup purpose purposeMap of
+        Nothing -> error "Unknown uniqueness purpose."
+        Just uniqueID -> do
+          put $ state { specialPurposeUniqueness = Map.insert purpose
+                                                              (uniqueID + 1)
+                                                              purposeMap }
+          return uniqueID
 
 
 instance (MonadTrans t, Monad (t m), MonadUnique m) => MonadUnique (t m) where
     getUniqueID = lift getUniqueID
-    getUniqueState = lift getUniqueState
+    createUniquenessPurpose = lift createUniquenessPurpose
+    deleteUniquenessPurpose purpose = lift $ deleteUniquenessPurpose purpose
+    getUniqueIDForPurpose purpose = lift $ getUniqueIDForPurpose purpose
 
 
 runUniqueT :: (Monad m) => (UniqueT m a) -> m a
-runUniqueT action = evalStateT action 0
-
-
-reenterUniqueT :: (Monad m) => UniqueState -> (UniqueT m a) -> m a
-reenterUniqueT state action = evalStateT action state
+runUniqueT action = evalStateT action $ UniqueState {
+                      generalPurposeUniqueness = 0,
+                      specialPurposeUniqueness = Map.empty
+                    }
