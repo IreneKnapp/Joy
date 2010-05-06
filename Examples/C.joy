@@ -85,6 +85,19 @@ instance Show ParseError where
     show (ParseError string) = string
 
 
+instance MonadLexer Parse Char where
+  peekInput offset = do
+    input <- lift get
+    if offset < length input
+      then return $ Just $ head $ drop offset input
+      else return Nothing
+  consumeInput count = do
+    input <- lift get
+    let result = take count input
+    lift $ put $ drop count input
+    return result
+
+
 readSimpleEscape :: String -> String
 readSimpleEscape "\\'" = "'"
 readSimpleEscape "\\\"" = "\""
