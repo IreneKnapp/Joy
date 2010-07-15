@@ -568,13 +568,17 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                            (map (\(_, _, _, maybeExpression)
                                                      -> Just maybeExpression)
                                                 subexpressionTuples)
-        nfas <- mapM (\(regexp, priority, result) -> regexpToNFA regexp
-                                                                 subexpressionBindingMap
-                                                                 (priority, result))
-                     $ zip3 regexps
-                            [0..]
-                            (map (\(_, _, result) -> result)
-                                 regexpStringResultTuples)
+        nfas <- withUniquenessPurpose
+          (\uniquenessPurpose ->
+             mapM (\(regexp, priority, result) ->
+                     regexpToNFA regexp
+                                 subexpressionBindingMap
+                                 (priority, result)
+                                 uniquenessPurpose)
+                  $ zip3 regexps
+                         [0..]
+                         (map (\(_, _, result) -> result)
+                              regexpStringResultTuples))
         let combinedNFA = combineNFAs nfas
         debugIntermediateAutomaton combinedNFA
         eitherMessageDFA <- nfaToDFA combinedNFA

@@ -2,6 +2,7 @@
              UndecidableInstances, FlexibleContexts #-}
 module Joy.Uniqueness (
                        UniqueID,
+                       UniquenessPurpose,
                        UniqueState,
                        MonadUnique(getUniqueID, getUniqueIDForPurpose),
                        withUniquenessPurpose,

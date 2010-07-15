@@ -389,8 +389,9 @@ regexpToNFA
     => (Regexp content)
     -> (Map String (Regexp content, Maybe stateData))
     -> (Int, stateData)
+    -> UniquenessPurpose
     -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe Int))
-regexpToNFA regexp subexpressionBindingMap datum = do
+regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
     let regexpToNFA' :: (NFA (EnumSet content)
                              (Maybe (Int, stateData))
                              (Maybe Int),
@@ -406,11 +407,12 @@ regexpToNFA regexp subexpressionBindingMap datum = do
           return (nfa, tailStates)
         regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) visited = do
           (nfa, newState) <- automatonAddState nfa Nothing
-          let nfa' = foldl (\nfa tailState -> automatonAddTransition nfa
-                                                                     tailState
-                                                                     newState
-                                                                     enumSet
-                                                                     Nothing)
+          let nfa' = foldl (\nfa tailState ->
+                              automatonAddTransition nfa
+                                                     tailState
+                                                     newState
+                                                     enumSet
+                                                     Nothing)
                            nfa
                            tailStates
           return (nfa', [newState])
