@@ -198,6 +198,60 @@ debugAutomaton automaton = do
         $ automatonStates automaton
 
 
+debugIntermediateAutomaton
+  :: (Ord content, Bounded content, Enum content,
+      Automaton a (EnumSet content) (Maybe (Int, Maybe ClientExpression)) ())
+  => a
+  -> Generation ()
+debugIntermediateAutomaton automaton = do
+  let toChar c = toEnum $ fromEnum c
+      charToStr '\a' = "\\a"
+      charToStr '\b' = "\\b"
+      charToStr '\n' = "\\n"
+      charToStr '\r' = "\\r"
+      charToStr '\f' = "\\f"
+      charToStr '\v' = "\\v"
+      charToStr '\t' = "\\t"
+      charToStr '\\' = "\\\\"
+      charToStr c | (isPrint c) && (not $ isSpace c) = [c]
+                  | ord c <= 0xFF = "\\x" ++ (padToLength 2 $ showHex (ord c) "")
+                  | ord c <= 0xFFFF = "\\u" ++ (padToLength 4 $ showHex (ord c) "")
+                  | otherwise = "\\U" ++ (padToLength 8 $ showHex (ord c) "")
+      padToLength n text = (take (n - length text) $ cycle "0") ++ text
+  mapM_ (\state -> do
+          let datum
+                = case automatonStateData automaton state of
+                    Nothing -> ""
+                    Just (priority, Nothing)
+                      -> (" " ++ show priority ++ " WHITESPACE")
+                    Just (priority, Just (ClientExpression string))
+                      -> (" " ++ show priority ++ " {" ++ string ++ "}")
+              start = automatonStateStarting automaton state
+              accepting = automatonStateAccepting automaton state
+              transitionMap = automatonTransitionMap automaton state
+          liftIO $ putStr $ if start then ">" else ""
+          liftIO $ putStr $ if accepting then "*" else ""
+          liftIO $ putStrLn $ (show state) ++ datum
+          mapM_ (\input -> do
+                   let resultStates
+                           = fromJust $ Map.lookup input transitionMap
+                   liftIO $ putStr "  "
+                   mapM_ (\(start, end) -> do
+                            if start == end
+                              then liftIO $ putStr $ charToStr $ toChar start
+                              else liftIO $ putStr
+                                       $ (charToStr $ toChar start)
+                                         ++ "-" ++ (charToStr $ toChar end))
+                         $ EnumSet.toList input
+                   liftIO $ putStr " ->"
+                   mapM_ (\resultState -> do
+                            liftIO $ putStr $ " " ++ (show resultState))
+                         $ map fst resultStates
+                   liftIO $ putStrLn "")
+                $ Map.keys transitionMap)
+        $ automatonStates automaton
+
+
 generate :: Generation ()
 generate = do
   readSpecification
@@ -510,6 +564,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                             (map (\(_, _, result) -> result)
                                  regexpStringResultTuples)
         let combinedNFA = combineNFAs nfas
+        debugIntermediateAutomaton combinedNFA
         eitherMessageDFA <- nfaToDFA combinedNFA
         case eitherMessageDFA of
           Left message -> fail message
