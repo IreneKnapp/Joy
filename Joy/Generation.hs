@@ -200,7 +200,10 @@ debugAutomaton automaton = do
 
 debugIntermediateAutomaton
   :: (Ord content, Bounded content, Enum content,
-      Automaton a (EnumSet content) (Maybe (Int, Maybe ClientExpression)) ())
+      Automaton a
+                (EnumSet content)
+                (Maybe (Int, Maybe ClientExpression))
+                (Maybe Int))
   => a
   -> Generation ()
 debugIntermediateAutomaton automaton = do
@@ -243,7 +246,16 @@ debugIntermediateAutomaton automaton = do
                                        $ (charToStr $ toChar start)
                                          ++ "-" ++ (charToStr $ toChar end))
                          $ EnumSet.toList input
-                   liftIO $ putStr " ->"
+                   liftIO $ putStr " ---"
+                   mapM_ (\maybeTransitionPriority -> do
+                            case maybeTransitionPriority of
+                              Nothing -> return ()
+                              Just transitionPriority -> do
+                                liftIO $ putStr $ "("
+                                                  ++ show transitionPriority
+                                                  ++ ")")
+                         $ map snd resultStates
+                   liftIO $ putStr "--->"
                    mapM_ (\resultState -> do
                             liftIO $ putStr $ " " ++ (show resultState))
                          $ map fst resultStates

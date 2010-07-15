@@ -389,12 +389,18 @@ regexpToNFA
     => (Regexp content)
     -> (Map String (Regexp content, Maybe stateData))
     -> (Int, stateData)
-    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) ())
+    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe Int))
 regexpToNFA regexp subexpressionBindingMap datum = do
-    let regexpToNFA' :: (NFA (EnumSet content) (Maybe (Int, stateData)) (), [UniqueID])
+    let regexpToNFA' :: (NFA (EnumSet content)
+                             (Maybe (Int, stateData))
+                             (Maybe Int),
+                         [UniqueID])
                      -> (Regexp content)
                      -> [String]
-                     -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (), [UniqueID])
+                     -> m (NFA (EnumSet content)
+                               (Maybe (Int, stateData))
+                               (Maybe Int),
+                           [UniqueID])
         regexpToNFA' (nfa, tailStates) (Grouped regexp) visited = do
           (nfa, tailStates) <- regexpToNFA' (nfa, tailStates) regexp visited
           return (nfa, tailStates)
@@ -404,7 +410,7 @@ regexpToNFA regexp subexpressionBindingMap datum = do
                                                                      tailState
                                                                      newState
                                                                      enumSet
-                                                                     ())
+                                                                     Nothing)
                            nfa
                            tailStates
           return (nfa', [newState])
@@ -437,7 +443,7 @@ regexpToNFA regexp subexpressionBindingMap datum = do
                                                                     tailState
                                                                     resultingState
                                                                     enumSet
-                                                                    ())
+                                                                    Nothing)
                                            nfa
                                            $ map fst resultingStates)
                                    nfa
@@ -458,7 +464,7 @@ regexpToNFA regexp subexpressionBindingMap datum = do
                                                                     tailState
                                                                     resultingState
                                                                     enumSet
-                                                                    ())
+                                                                    Nothing)
                                            nfa
                                            $ map fst resultingStates)
                                    nfa
