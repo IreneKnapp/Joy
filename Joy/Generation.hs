@@ -203,7 +203,7 @@ debugIntermediateAutomaton
       Automaton a
                 (EnumSet content)
                 (Maybe (Int, Maybe ClientExpression))
-                (Maybe Int))
+                (Maybe UniqueID))
   => a
   -> Generation ()
 debugIntermediateAutomaton automaton = do

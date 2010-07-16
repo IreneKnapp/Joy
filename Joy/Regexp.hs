@@ -390,22 +390,26 @@ regexpToNFA
     -> (Map String (Regexp content, Maybe stateData))
     -> (Int, stateData)
     -> UniquenessPurpose
-    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe Int))
+    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe UniqueID))
 regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
     let regexpToNFA' :: (NFA (EnumSet content)
                              (Maybe (Int, stateData))
-                             (Maybe Int),
+                             (Maybe UniqueID),
                          [UniqueID])
                      -> (Regexp content)
                      -> [String]
                      -> m (NFA (EnumSet content)
                                (Maybe (Int, stateData))
-                               (Maybe Int),
+                               (Maybe UniqueID),
                            [UniqueID])
-        regexpToNFA' (nfa, tailStates) (Grouped regexp) visited = do
+        regexpToNFA' (nfa, tailStates)
+                     (Grouped regexp)
+                     visited = do
           (nfa, tailStates) <- regexpToNFA' (nfa, tailStates) regexp visited
           return (nfa, tailStates)
-        regexpToNFA' (nfa, tailStates) (EnumSetRegexp enumSet) visited = do
+        regexpToNFA' (nfa, tailStates)
+                     (EnumSetRegexp enumSet)
+                     visited = do
           (nfa, newState) <- automatonAddState nfa Nothing
           let nfa' = foldl (\nfa tailState ->
                               automatonAddTransition nfa
@@ -416,12 +420,16 @@ regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
                            nfa
                            tailStates
           return (nfa', [newState])
-        regexpToNFA' (nfa, initialTailStates) (Sequence regexps) visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (Sequence regexps)
+                     visited = do
           foldlM (\(nfa, tailStates) regexp
                       -> regexpToNFA' (nfa, tailStates) regexp visited)
                  (nfa, initialTailStates)
                  regexps
-        regexpToNFA' (nfa, initialTailStates) (Alternation regexps) visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (Alternation regexps)
+                     visited = do
           foldlM (\(nfa, tailStates) regexp -> do
                    (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates)
                                                         regexp
@@ -429,10 +437,14 @@ regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
                    return (nfa, concat [tailStates, newTailStates]))
                  (nfa, [])
                  regexps
-        regexpToNFA' (nfa, initialTailStates) (ZeroOrOne regexp) visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (ZeroOrOne regexp)
+                     visited = do
           (nfa', newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
           return $ (nfa', concat [initialTailStates, newTailStates])
-        regexpToNFA' (nfa, initialTailStates) (ZeroOrMore regexp) visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (ZeroOrMore regexp)
+                     visited = do
           let exampleTailState = head initialTailStates
               preexistingTransitions = automatonTransitionMap nfa exampleTailState
           (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
@@ -453,7 +465,9 @@ regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
                            nfa
                            $ Map.toList exampleTransitions
           return $ (nfa', concat [initialTailStates, newTailStates])
-        regexpToNFA' (nfa, initialTailStates) (OneOrMore regexp) visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     (OneOrMore regexp)
+                     visited = do
           let exampleTailState = head initialTailStates
               preexistingTransitions = automatonTransitionMap nfa exampleTailState
           (nfa, newTailStates) <- regexpToNFA' (nfa, initialTailStates) regexp visited
@@ -488,12 +502,13 @@ regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
                   regexpToNFA' (nfa, initialTailStates)
                                subexpression
                                (visited ++ [identifier])
-        regexpToNFA' (nfa, initialTailStates) regexp visited = do
+        regexpToNFA' (nfa, initialTailStates)
+                     regexp
+                     visited = do
           trace (show regexp) (return (nfa, initialTailStates))
     emptyNFA <- emptyAutomaton Nothing
-    (fullNFA, fullNFATailStates) <- regexpToNFA' (emptyNFA, automatonStates emptyNFA)
-                                                 regexp
-                                                 []
+    (fullNFA, fullNFATailStates)
+      <- regexpToNFA' (emptyNFA, automatonStates emptyNFA) regexp []
     fullNFA <- foldlM (\nfa tailState -> do
                         let nfa' = automatonSetStateAccepting nfa tailState True
                             nfa'' = automatonSetStateData nfa' tailState $ Just datum
