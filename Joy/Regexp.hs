@@ -17,7 +17,7 @@ module Joy.Regexp (
 import Control.Monad.Error
 import Control.Monad.Identity
 import Data.Char
-import Data.Foldable
+import Data.Foldable hiding (mapM_)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -28,9 +28,11 @@ import Prelude hiding (all, concat, elem, foldl)
 import Joy.Automata
 import Joy.Documentation
 import Joy.EnumSet
+import qualified Joy.EnumSet as EnumSet
 import Joy.Uniqueness
 
 import Debug.Trace
+import System.IO.Unsafe
 
 
 data (Ord content, Bounded content, Enum content) => Regexp content
@@ -42,10 +44,46 @@ data (Ord content, Bounded content, Enum content) => Regexp content
     | OneOrMore (Regexp content)
     | Grouped (Regexp content)
     | NamedSubexpression String
+        -- TODO implement substitution for these as a pre-pass before
+        -- converting to a low-level regexp.
     | PositiveLookahead (Regexp content)
+        -- TODO implement these as special stuff in the low-level regexp.
     | NegativeLookahead (Regexp content)
+        -- TODO implement these as special stuff in the low-level regexp.
     | PositiveLookbehind (Regexp content)
+        -- TODO implement these as special stuff in the low-level regexp.
     | NegativeLookbehind (Regexp content)
+        -- TODO implement these as special stuff in the low-level regexp.
+
+
+data (Ord content, Bounded content, Enum content) => LowLevelRegexpContent content
+    = Content (EnumSet content)
+    | EndOfInputMark
+
+
+data (Ord content, Bounded content, Enum content) => LowLevelRegexpNode content
+    = Epsilon
+    | Tag UniqueID
+    | Leaf UniqueID (LowLevelRegexpContent content)
+    | AlternationNode
+    | SequenceNode
+    | RepetitionNode
+
+
+data (Ord content, Bounded content, Enum content) => LowLevelRegexp content
+  = LowLevelRegexp (LowLevelRegexpNode content) [LowLevelRegexp content]
+
+
+data (Ord content, Bounded content, Enum content)
+  => AugmentedLowLevelRegexp content
+    = AugmentedLowlevelRegexp {
+        augmentedLowLevelRegexpNode :: LowLevelRegexpNode content,
+        augmentedLowLevelRegexpChildren :: [AugmentedLowLevelRegexp content],
+        augmentedLowLevelRegexpNullable :: Bool,
+        augmentedLowLevelRegexpFirstPosition :: Set (UniqueID, Set UniqueID),
+        augmentedLowLevelRegexpLastPosition :: Set (UniqueID, Set UniqueID),
+        augmentedLowLevelRegexpEmptyMatch :: Bool
+      }
 
 
 instance (Ord content, Bounded content, Enum content) => Show (Regexp content) where
@@ -383,6 +421,105 @@ mkOneOrMoreRegexp
 mkOneOrMoreRegexp regexp = OneOrMore regexp
 
 
+regexpToLowLevelRegexp
+    :: forall content . (Ord content, Bounded content, Enum content)
+    => (Regexp content)
+    -> (LowLevelRegexp content)
+regexpToLowLevelRegexp (EnumSetRegexp enumSet) = undefined -- TODO
+regexpToLowLevelRegexp (Sequence children) = undefined -- TODO
+regexpToLowLevelRegexp (Alternation children) = undefined -- TODO
+regexpToLowLevelRegexp (ZeroOrOne child) = undefined -- TODO
+regexpToLowLevelRegexp (ZeroOrMore child) = undefined -- TODO
+regexpToLowLevelRegexp (OneOrMore child) = undefined -- TODO
+regexpToLowLevelRegexp (Grouped child) = undefined -- TODO
+regexpToLowLevelRegexp (NamedSubexpression string) = undefined -- TODO
+regexpToLowLevelRegexp (PositiveLookahead child) = undefined -- TODO
+regexpToLowLevelRegexp (NegativeLookahead child) = undefined -- TODO
+regexpToLowLevelRegexp (PositiveLookbehind child) = undefined -- TODO
+regexpToLowLevelRegexp (NegativeLookbehind child) = undefined -- TODO
+
+
+augmentLowLevelRegexp
+    :: forall content . (Ord content, Bounded content, Enum content)
+    => (LowLevelRegexp content)
+    -> (AugmentedLowLevelRegexp content)
+augmentLowLevelRegexp (LowLevelRegexp Epsilon children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp (Tag tag) children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp (Leaf position content) children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp AlternationNode children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp SequenceNode children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp RepetitionNode children) = undefined -- TODO
+
+
+regexpToNFA
+    :: forall m content stateData
+       . (MonadUnique m, Ord content, Bounded content, Enum content)
+    => (Regexp content)
+    -> (Map String (Regexp content, Maybe stateData))
+    -> (Int, stateData)
+    -> UniquenessPurpose
+    -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe UniqueID))
+regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
+  let lowLevelRegexp = regexpToLowLevelRegexp regexp
+  foo <- return $ unsafePerformIO $ debugLowLevelRegexp lowLevelRegexp
+  {-
+  let augmentedLowLevelRegexp = augmentLowLevelRegexp lowLevelRegexpx
+  bar <- return $ unsafePerformIO $ debugAugmentedLowLevelRegexp lowLevelRegexp
+  -}
+  emptyNFA <- emptyAutomaton Nothing
+  return $ seq foo emptyNFA
+
+
+debugLowLevelRegexp
+  :: forall content . (Ord content, Bounded content, Enum content)
+  => (LowLevelRegexp content)
+  -> IO ()
+debugLowLevelRegexp lowLevelRegexp = do
+  let toChar c = toEnum $ fromEnum c
+      charToStr '\a' = "\\a"
+      charToStr '\b' = "\\b"
+      charToStr '\n' = "\\n"
+      charToStr '\r' = "\\r"
+      charToStr '\f' = "\\f"
+      charToStr '\v' = "\\v"
+      charToStr '\t' = "\\t"
+      charToStr '\\' = "\\\\"
+      charToStr c | (isPrint c) && (not $ isSpace c) = [c]
+                  | ord c <= 0xFF = "\\x" ++ (padToLength 2 $ showHex (ord c) "")
+                  | ord c <= 0xFFFF = "\\u" ++ (padToLength 4 $ showHex (ord c) "")
+                  | otherwise = "\\U" ++ (padToLength 8 $ showHex (ord c) "")
+      padToLength n text = (take (n - length text) $ cycle "0") ++ text
+      visitRegexp (LowLevelRegexp node children) depth = do
+        putStr $ take (depth * 4) $ repeat ' '
+        visitNode node
+        putStr $ "\n"
+        mapM_ (\child -> visitRegexp child (depth + 1)) children
+      visitNode Epsilon = putStr $ "ε"
+      visitNode (Tag id) = putStr $ "t" ++ (show id)
+      visitNode (Leaf position content) = do
+        putStr $ "leaf " ++ (show position) ++ " "
+        case content of
+          (Content input) -> do
+                       mapM_ (\(start, end) -> do
+                                if start == end
+                                  then liftIO $ putStr $ charToStr $ toChar start
+                                  else liftIO $ putStr $ (charToStr $ toChar start)
+                                         ++ "-" ++ (charToStr $ toChar end))
+                             $ EnumSet.toList input
+          EndOfInputMark -> putStr "#"
+      visitNode AlternationNode = putStr $ "|"
+      visitNode SequenceNode = putStr $ "o"
+      visitNode RepetitionNode = putStr $ "*"
+  visitRegexp lowLevelRegexp 0
+
+debugAugmentedLowLevelRegexp
+  :: forall content . (Ord content, Bounded content, Enum content)
+  => (AugmentedLowLevelRegexp content)
+  -> IO ()
+debugAugmentedLowLevelRegexp augmentedLowLevelRegexp = undefined -- TODO
+
+
+{-
 regexpToNFA
     :: forall m content stateData
        . (MonadUnique m, Ord content, Bounded content, Enum content)
@@ -516,3 +653,4 @@ regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
                       fullNFA
                       fullNFATailStates
     return $ fullNFA
+-}

@@ -580,7 +580,7 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                          (map (\(_, _, result) -> result)
                               regexpStringResultTuples))
         let combinedNFA = combineNFAs nfas
-        debugIntermediateAutomaton combinedNFA
+        -- debugIntermediateAutomaton combinedNFA
         eitherMessageDFA <- nfaToDFA combinedNFA
         case eitherMessageDFA of
           Left message -> fail message
