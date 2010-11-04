@@ -12,11 +12,10 @@ bug-reports: http://dankna.com/issues/create/
 category: Language, Database
 synopsis: Integrated lexer/parser generator
 description:
-  This is a lexer and parser generaor for Haskell.  Compared to Alex,
+  Joy is a lexer and parser generator for Haskell.  For lexers,
   it supports positive and negative lookahead and lookbehind assertions,
-  and subexpression capturing.  Compared to Happy, it does not support
-  unification or GLR, but does support shift-actions, actions which
-  happen in the middle of a production.
+  subexpression capturing, and UTF8.  For parsers, it supports
+  GLR, unification-based parsing, and shift-actions.
 
 Executable joy
   main-is: Main.hs

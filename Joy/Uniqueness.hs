@@ -5,6 +5,8 @@ module Joy.Uniqueness (
                        UniquenessPurpose,
                        UniqueState,
                        MonadUnique(getUniqueID, getUniqueIDForPurpose),
+                       createUniquenessPurpose,
+                       deleteUniquenessPurpose,
                        withUniquenessPurpose,
                        UniqueT,
                        runUniqueT

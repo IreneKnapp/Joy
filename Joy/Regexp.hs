@@ -2,6 +2,7 @@
 module Joy.Regexp (
                    Regexp,
                    parseRegexp,
+                   substituteRegexpSubexpressions,
                    mkSingletonRegexp,
                    mkEnumSetRegexp,
                    mkStringRegexp,
@@ -10,7 +11,7 @@ module Joy.Regexp (
                    mkZeroOrOneRegexp,
                    mkZeroOrMoreRegexp,
                    mkOneOrMoreRegexp,
-                   regexpToNFA
+                   regexpsToNFA
                   )
     where
 
@@ -26,6 +27,7 @@ import Numeric
 import Prelude hiding (all, concat, elem, foldl)
 
 import Joy.Automata
+import Joy.Client
 import Joy.Documentation
 import Joy.EnumSet
 import qualified Joy.EnumSet as EnumSet
@@ -44,8 +46,7 @@ data (Ord content, Bounded content, Enum content) => Regexp content
     | OneOrMore (Regexp content)
     | Grouped (Regexp content)
     | NamedSubexpression String
-        -- TODO implement substitution for these as a pre-pass before
-        -- converting to a low-level regexp.
+    | SubexpressionTransformation (Regexp content) (Maybe ClientExpression)
     | PositiveLookahead (Regexp content)
         -- TODO implement these as special stuff in the low-level regexp.
     | NegativeLookahead (Regexp content)
@@ -95,6 +96,8 @@ instance (Ord content, Bounded content, Enum content) => Show (Regexp content) w
     show (OneOrMore regexp) = "OneOrMore (" ++ show regexp ++ ")"
     show (Grouped regexp) = "Grouped (" ++ show regexp ++ ")"
     show (NamedSubexpression identifier) = "NamedSubexpression " ++ identifier
+    show (SubexpressionTransformation regexp _)
+      = "SubexpressionTransformation (" ++ show regexp ++ ")"
     show (PositiveLookahead regexp) = "PositiveLookahead (" ++ show regexp ++ ")"
     show (NegativeLookahead regexp) = "NegativeLookahead (" ++ show regexp ++ ")"
     show (PositiveLookbehind regexp) = "PositiveLookbehind (" ++ show regexp ++ ")"
@@ -103,8 +106,14 @@ instance (Ord content, Bounded content, Enum content) => Show (Regexp content) w
 
 data RegexpParseError = RegexpParseError String
 instance Error RegexpParseError where
-    strMsg string = RegexpParseError string
+  strMsg string = RegexpParseError string
 type RegexpParse = ErrorT RegexpParseError Identity
+
+
+data RegexpSubstitutionError = RegexpSubstitutionError String
+instance Error RegexpSubstitutionError where
+  strMsg string = RegexpSubstitutionError string
+type RegexpSubstitution = ErrorT RegexpSubstitutionError Identity
 
 
 data (Ord content, Bounded content, Enum content) => RegexpChar content
@@ -365,6 +374,61 @@ parseRegexp input binaryMode =
          Right result -> Right result
 
 
+substituteRegexpSubexpressions
+  :: forall content . (Ord content, Bounded content, Enum content)
+  => Map String (Regexp content, Maybe (Maybe ClientExpression))
+  -> Regexp content
+  -> Either String (Regexp content)
+substituteRegexpSubexpressions subexpressions regexp =
+  let visit node@(EnumSetRegexp _) = do
+        return node
+      visit (Sequence subexpressions) = do
+        subexpressions <- mapM visit subexpressions
+        return $ Sequence subexpressions
+      visit (Alternation subexpressions) = do
+        subexpressions <- mapM visit subexpressions
+        return $ Alternation subexpressions
+      visit (ZeroOrOne subexpression) = do
+        subexpression <- visit subexpression
+        return $ ZeroOrOne subexpression
+      visit (ZeroOrMore subexpression) = do
+        subexpression <- visit subexpression
+        return $ ZeroOrMore subexpression
+      visit (OneOrMore subexpression) = do
+        subexpression <- visit subexpression
+        return $ OneOrMore subexpression
+      visit (Grouped subexpression) = do
+        subexpression <- visit subexpression
+        return $ Grouped subexpression
+      visit (NamedSubexpression name) = do
+        case Map.lookup name subexpressions of
+          Nothing -> fail $ "Undefined subexpression " ++ show name
+          Just (subexpression, Nothing) -> do
+            subexpression <- visit subexpression
+            return subexpression
+          Just (subexpression, Just maybeTransformation) -> do
+            subexpression <- visit subexpression
+            return $ SubexpressionTransformation subexpression maybeTransformation
+      visit (SubexpressionTransformation subexpression maybeTransformation) = do
+        subexpression <- visit subexpression
+        return $ SubexpressionTransformation subexpression maybeTransformation
+      visit (PositiveLookahead subexpression) = do
+        subexpression <- visit subexpression
+        return $ PositiveLookahead subexpression
+      visit (NegativeLookahead subexpression) = do
+        subexpression <- visit subexpression
+        return $ NegativeLookahead subexpression
+      visit (PositiveLookbehind subexpression) = do
+        subexpression <- visit subexpression
+        return $ PositiveLookbehind subexpression
+      visit (NegativeLookbehind subexpression) = do
+        subexpression <- visit subexpression
+        return $ NegativeLookbehind subexpression
+  in case runIdentity $ runErrorT $ visit regexp of
+       Left (RegexpSubstitutionError message) -> Left message
+       Right result -> Right result
+
+
 mkSingletonRegexp
     :: (Ord content, Bounded content, Enum content)
     => content
@@ -421,22 +485,87 @@ mkOneOrMoreRegexp
 mkOneOrMoreRegexp regexp = OneOrMore regexp
 
 
-regexpToLowLevelRegexp
-    :: forall content . (Ord content, Bounded content, Enum content)
-    => (Regexp content)
-    -> (LowLevelRegexp content)
-regexpToLowLevelRegexp (EnumSetRegexp enumSet) = undefined -- TODO
-regexpToLowLevelRegexp (Sequence children) = undefined -- TODO
-regexpToLowLevelRegexp (Alternation children) = undefined -- TODO
-regexpToLowLevelRegexp (ZeroOrOne child) = undefined -- TODO
-regexpToLowLevelRegexp (ZeroOrMore child) = undefined -- TODO
-regexpToLowLevelRegexp (OneOrMore child) = undefined -- TODO
-regexpToLowLevelRegexp (Grouped child) = undefined -- TODO
-regexpToLowLevelRegexp (NamedSubexpression string) = undefined -- TODO
-regexpToLowLevelRegexp (PositiveLookahead child) = undefined -- TODO
-regexpToLowLevelRegexp (NegativeLookahead child) = undefined -- TODO
-regexpToLowLevelRegexp (PositiveLookbehind child) = undefined -- TODO
-regexpToLowLevelRegexp (NegativeLookbehind child) = undefined -- TODO
+regexpsToLowLevelRegexp
+    :: forall m content
+       . (MonadUnique m, Ord content, Bounded content, Enum content)
+    => [Regexp content]
+    -> UniquenessPurpose
+    -> UniquenessPurpose
+    -> m (LowLevelRegexp content)
+regexpsToLowLevelRegexp regexps
+                        tagIDUniquenessPurpose
+                        leafPositionUniquenessPurpose = do
+  let regexpToLowLevelRegexp' (EnumSetRegexp enumSet) = do
+        position <- getUniqueIDForPurpose leafPositionUniquenessPurpose
+        return $ LowLevelRegexp (Leaf position (Content enumSet)) []
+      regexpToLowLevelRegexp' (Sequence children) = do
+        innermostLowLevelRegexp <- regexpToLowLevelRegexp' $ head children
+        foldlM (\leftLowLevelRegexp child -> do
+                  rightLowLevelRegexp <- regexpToLowLevelRegexp' child
+                  return $ LowLevelRegexp SequenceNode
+                                          [leftLowLevelRegexp,
+                                           rightLowLevelRegexp])
+               innermostLowLevelRegexp
+               $ tail children
+      regexpToLowLevelRegexp' (Alternation children) = do
+        innermostLowLevelRegexp <- regexpToLowLevelRegexp' $ head children
+        foldlM (\leftLowLevelRegexp child -> do
+                  rightLowLevelRegexp <- regexpToLowLevelRegexp' child
+                  return $ LowLevelRegexp AlternationNode
+                                          [leftLowLevelRegexp,
+                                           rightLowLevelRegexp])
+               innermostLowLevelRegexp
+               $ tail children
+      regexpToLowLevelRegexp' (ZeroOrOne child) = do
+        innerLowLevelRegexp <- regexpToLowLevelRegexp' child
+        return $ LowLevelRegexp AlternationNode
+                                [LowLevelRegexp Epsilon [],
+                                 innerLowLevelRegexp]
+      regexpToLowLevelRegexp' (ZeroOrMore child) = do
+        innerLowLevelRegexp <- regexpToLowLevelRegexp' child
+        return $ LowLevelRegexp RepetitionNode [innerLowLevelRegexp]
+      regexpToLowLevelRegexp' (OneOrMore child) = do
+        initialLowLevelRegexp <- regexpToLowLevelRegexp' child
+        repeatedLowLevelRegexp <- regexpToLowLevelRegexp' child
+        return $ LowLevelRegexp SequenceNode
+                                [initialLowLevelRegexp,
+                                 LowLevelRegexp RepetitionNode
+                                                [repeatedLowLevelRegexp]]
+      regexpToLowLevelRegexp' (Grouped child) = do
+        startTagID <- getUniqueIDForPurpose tagIDUniquenessPurpose
+        endTagID <- getUniqueIDForPurpose tagIDUniquenessPurpose
+        innerLowLevelRegexp <- regexpToLowLevelRegexp' child
+        return $ LowLevelRegexp SequenceNode
+                                [LowLevelRegexp SequenceNode
+                                                [LowLevelRegexp (Tag startTagID)
+                                                                [],
+                                                 innerLowLevelRegexp],
+                                 LowLevelRegexp (Tag endTagID)
+                                                []]
+      regexpToLowLevelRegexp'
+       (SubexpressionTransformation child maybeTransformation) = do
+        startTagID <- getUniqueIDForPurpose tagIDUniquenessPurpose
+        endTagID <- getUniqueIDForPurpose tagIDUniquenessPurpose
+        innerLowLevelRegexp <- regexpToLowLevelRegexp' child
+        return $ LowLevelRegexp SequenceNode
+                                [LowLevelRegexp SequenceNode
+                                                [LowLevelRegexp (Tag startTagID)
+                                                                [],
+                                                 innerLowLevelRegexp],
+                                 LowLevelRegexp (Tag endTagID)
+                                                []]
+        -- TODO ignores the transformation
+      regexpToLowLevelRegexp' (PositiveLookahead child) = undefined -- TODO
+      regexpToLowLevelRegexp' (NegativeLookahead child) = undefined -- TODO
+      regexpToLowLevelRegexp' (PositiveLookbehind child) = undefined -- TODO
+      regexpToLowLevelRegexp' (NegativeLookbehind child) = undefined -- TODO
+  innerLowLevelRegexp <- regexpToLowLevelRegexp'
+                         $ Grouped
+                         $ Alternation regexps
+  position <- getUniqueIDForPurpose leafPositionUniquenessPurpose
+  return $ LowLevelRegexp SequenceNode
+                          [innerLowLevelRegexp,
+                           LowLevelRegexp (Leaf position EndOfInputMark) []]
 
 
 augmentLowLevelRegexp
@@ -451,16 +580,17 @@ augmentLowLevelRegexp (LowLevelRegexp SequenceNode children) = undefined -- TODO
 augmentLowLevelRegexp (LowLevelRegexp RepetitionNode children) = undefined -- TODO
 
 
-regexpToNFA
+regexpsToNFA
     :: forall m content stateData
        . (MonadUnique m, Ord content, Bounded content, Enum content)
-    => (Regexp content)
-    -> (Map String (Regexp content, Maybe stateData))
-    -> (Int, stateData)
+    => [Regexp content]
+    -> UniquenessPurpose
     -> UniquenessPurpose
     -> m (NFA (EnumSet content) (Maybe (Int, stateData)) (Maybe UniqueID))
-regexpToNFA regexp subexpressionBindingMap datum uniquenessPurpose = do
-  let lowLevelRegexp = regexpToLowLevelRegexp regexp
+regexpsToNFA regexps tagIDUniquenessPurpose leafPositionUniquenessPurpose = do
+  lowLevelRegexp <- regexpsToLowLevelRegexp regexps
+                                            tagIDUniquenessPurpose
+                                            leafPositionUniquenessPurpose
   foo <- return $ unsafePerformIO $ debugLowLevelRegexp lowLevelRegexp
   {-
   let augmentedLowLevelRegexp = augmentLowLevelRegexp lowLevelRegexpx

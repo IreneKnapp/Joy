@@ -142,16 +142,16 @@ debugLexers = do
   mapM_ (\(name, binaryFlag, anyLexer) -> do
           liftIO $ putStrLn $ "\nLexer " ++ name
                               ++ (if binaryFlag then " binary" else "")
-          Lexer lexer <- return anyLexer
-          debugAutomaton lexer)
+          case anyLexer of
+           Lexer lexer -> debugLexer lexer)
         lexers
 
 
-debugAutomaton :: (Ord content, Bounded content, Enum content,
-                   Automaton a (EnumSet content) (Maybe (Maybe ClientExpression)) ())
-               => a
-               -> Generation ()
-debugAutomaton automaton = do
+debugLexer :: (Ord content, Bounded content, Enum content,
+               Automaton a (EnumSet content) (Maybe (Maybe ClientExpression)) ())
+           => a
+           -> Generation ()
+debugLexer automaton = do
   let toChar c = toEnum $ fromEnum c
       charToStr '\a' = "\\a"
       charToStr '\b' = "\\b"
@@ -552,10 +552,6 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                        (Maybe (Maybe ClientExpression))
                                        ())
       compileLexer' = do
-        regexps <- mapM (\(lineNumber, regexpString, _)
-                             -> attempt (parseRegexp regexpString binaryFlag)
-                                        lineNumber)
-                        regexpStringResultTuples
         subexpressions
             <- mapM (\(lineNumber, _, regexpString, _)
                          -> attempt (parseRegexp regexpString binaryFlag)
@@ -568,20 +564,23 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
                                            (map (\(_, _, _, maybeExpression)
                                                      -> Just maybeExpression)
                                                 subexpressionTuples)
-        nfas <- withUniquenessPurpose
-          (\uniquenessPurpose ->
-             mapM (\(regexp, priority, result) ->
-                     regexpToNFA regexp
-                                 subexpressionBindingMap
-                                 (priority, result)
-                                 uniquenessPurpose)
-                  $ zip3 regexps
-                         [0..]
-                         (map (\(_, _, result) -> result)
-                              regexpStringResultTuples))
-        let combinedNFA = combineNFAs nfas
-        -- debugIntermediateAutomaton combinedNFA
-        eitherMessageDFA <- nfaToDFA combinedNFA
+        regexps <- mapM (\(lineNumber, regexpString, _) -> do
+                           regexp <- attempt (parseRegexp regexpString binaryFlag)
+                                             lineNumber
+                           attempt (substituteRegexpSubexpressions
+                                     subexpressionBindingMap
+                                     regexp)
+                                   lineNumber)
+                        regexpStringResultTuples
+        nfa <- withUniquenessPurpose
+          (\tagIDUniquenessPurpose ->
+             withUniquenessPurpose
+               (\leafPositionUniquenessPurpose ->
+                  regexpsToNFA regexps
+                               tagIDUniquenessPurpose
+                               leafPositionUniquenessPurpose))
+        -- debugIntermediateAutomaton nfa
+        eitherMessageDFA <- nfaToDFA nfa
         case eitherMessageDFA of
           Left message -> fail message
           Right dfa -> return dfa
