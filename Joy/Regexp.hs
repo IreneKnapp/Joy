@@ -18,7 +18,7 @@ module Joy.Regexp (
 import Control.Monad.Error
 import Control.Monad.Identity
 import Data.Char
-import Data.Foldable hiding (mapM_)
+import Data.Foldable hiding (mapM_, any)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -77,14 +77,14 @@ data (Ord content, Bounded content, Enum content) => LowLevelRegexp content
 
 data (Ord content, Bounded content, Enum content)
   => AugmentedLowLevelRegexp content
-    = AugmentedLowlevelRegexp {
-        augmentedLowLevelRegexpNode :: LowLevelRegexpNode content,
-        augmentedLowLevelRegexpChildren :: [AugmentedLowLevelRegexp content],
-        augmentedLowLevelRegexpNullable :: Bool,
-        augmentedLowLevelRegexpFirstPosition :: Set (UniqueID, Set UniqueID),
-        augmentedLowLevelRegexpLastPosition :: Set (UniqueID, Set UniqueID),
-        augmentedLowLevelRegexpEmptyMatch :: Bool
-      }
+  = AugmentedLowLevelRegexp {
+      augmentedLowLevelRegexpNode :: LowLevelRegexpNode content,
+      augmentedLowLevelRegexpChildren :: [AugmentedLowLevelRegexp content],
+      augmentedLowLevelRegexpNullable :: Bool,
+      augmentedLowLevelRegexpFirstPosition :: Set (UniqueID, Set UniqueID),
+      augmentedLowLevelRegexpLastPosition :: Set (UniqueID, Set UniqueID),
+      augmentedLowLevelRegexpEmptyMatch :: Set UniqueID
+    }
 
 
 instance (Ord content, Bounded content, Enum content) => Show (Regexp content) where
@@ -572,12 +572,108 @@ augmentLowLevelRegexp
     :: forall content . (Ord content, Bounded content, Enum content)
     => (LowLevelRegexp content)
     -> (AugmentedLowLevelRegexp content)
-augmentLowLevelRegexp (LowLevelRegexp Epsilon children) = undefined -- TODO
-augmentLowLevelRegexp (LowLevelRegexp (Tag tag) children) = undefined -- TODO
-augmentLowLevelRegexp (LowLevelRegexp (Leaf position content) children) = undefined -- TODO
-augmentLowLevelRegexp (LowLevelRegexp AlternationNode children) = undefined -- TODO
-augmentLowLevelRegexp (LowLevelRegexp SequenceNode children) = undefined -- TODO
-augmentLowLevelRegexp (LowLevelRegexp RepetitionNode children) = undefined -- TODO
+augmentLowLevelRegexp (LowLevelRegexp Epsilon [])
+  = AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = Epsilon,
+         augmentedLowLevelRegexpChildren = [],
+         augmentedLowLevelRegexpNullable = True,
+         augmentedLowLevelRegexpFirstPosition = Set.empty,
+         augmentedLowLevelRegexpLastPosition = Set.empty,
+         augmentedLowLevelRegexpEmptyMatch = Set.empty
+       }
+augmentLowLevelRegexp (LowLevelRegexp (Tag tag) [])
+  = AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = Tag tag,
+         augmentedLowLevelRegexpChildren = [],
+         augmentedLowLevelRegexpNullable = True,
+         augmentedLowLevelRegexpFirstPosition = Set.empty,
+         augmentedLowLevelRegexpLastPosition = Set.empty,
+         augmentedLowLevelRegexpEmptyMatch = Set.singleton tag
+       }
+augmentLowLevelRegexp (LowLevelRegexp (Leaf position content) [])
+  = AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = Leaf position content,
+         augmentedLowLevelRegexpChildren = [],
+         augmentedLowLevelRegexpNullable = False,
+         augmentedLowLevelRegexpFirstPosition
+           = Set.singleton (position, Set.empty),
+         augmentedLowLevelRegexpLastPosition
+           = Set.singleton (position, Set.empty),
+         augmentedLowLevelRegexpEmptyMatch = Set.empty
+       }
+augmentLowLevelRegexp (LowLevelRegexp AlternationNode children@[_, _]) =
+  let augmentedChildren@[augmentedChild1, augmentedChild2]
+        = map augmentLowLevelRegexp children
+  in AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = AlternationNode,
+         augmentedLowLevelRegexpChildren = augmentedChildren,
+         augmentedLowLevelRegexpNullable
+           = any augmentedLowLevelRegexpNullable augmentedChildren,
+         augmentedLowLevelRegexpFirstPosition
+           = Set.union (augmentedLowLevelRegexpFirstPosition augmentedChild1)
+                       (augmentedLowLevelRegexpFirstPosition augmentedChild2),
+         augmentedLowLevelRegexpLastPosition
+           = Set.union (augmentedLowLevelRegexpLastPosition augmentedChild1)
+                       (augmentedLowLevelRegexpLastPosition augmentedChild2),
+         augmentedLowLevelRegexpEmptyMatch
+           = if augmentedLowLevelRegexpNullable augmentedChild1
+               then augmentedLowLevelRegexpEmptyMatch augmentedChild1
+               else augmentedLowLevelRegexpEmptyMatch augmentedChild2
+       }
+augmentLowLevelRegexp (LowLevelRegexp SequenceNode children@[_, _]) =
+  let augmentedChildren@[augmentedChild1, augmentedChild2]
+        = map augmentLowLevelRegexp children
+  in AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = SequenceNode,
+         augmentedLowLevelRegexpChildren = augmentedChildren,
+         augmentedLowLevelRegexpNullable
+           = all augmentedLowLevelRegexpNullable augmentedChildren,
+         augmentedLowLevelRegexpFirstPosition
+           = if augmentedLowLevelRegexpNullable augmentedChild1
+               then Set.union
+                      (augmentedLowLevelRegexpFirstPosition augmentedChild1)
+                      (augmentLowLevelRegexpAddTags
+                        (augmentedLowLevelRegexpFirstPosition augmentedChild2)
+                        (augmentedLowLevelRegexpEmptyMatch augmentedChild1))
+               else augmentedLowLevelRegexpFirstPosition augmentedChild1,
+         augmentedLowLevelRegexpLastPosition
+           = if augmentedLowLevelRegexpNullable augmentedChild2
+               then Set.union
+                      (augmentedLowLevelRegexpLastPosition augmentedChild2)
+                      (augmentLowLevelRegexpAddTags
+                        (augmentedLowLevelRegexpLastPosition augmentedChild1)
+                        (augmentedLowLevelRegexpEmptyMatch augmentedChild2))
+               else augmentedLowLevelRegexpLastPosition augmentedChild2,
+         augmentedLowLevelRegexpEmptyMatch
+           = Set.union (augmentedLowLevelRegexpEmptyMatch augmentedChild1)
+                       (augmentedLowLevelRegexpEmptyMatch augmentedChild2)
+       }
+augmentLowLevelRegexp (LowLevelRegexp RepetitionNode children@[_]) =
+  let augmentedChildren@[augmentedChild]
+        = map augmentLowLevelRegexp children
+  in AugmentedLowLevelRegexp {
+         augmentedLowLevelRegexpNode = RepetitionNode,
+         augmentedLowLevelRegexpChildren = augmentedChildren,
+         augmentedLowLevelRegexpNullable = True,
+         augmentedLowLevelRegexpFirstPosition
+           = augmentedLowLevelRegexpFirstPosition augmentedChild,
+         augmentedLowLevelRegexpLastPosition
+           = augmentedLowLevelRegexpLastPosition augmentedChild,
+         augmentedLowLevelRegexpEmptyMatch
+           = if augmentedLowLevelRegexpNullable augmentedChild
+               then augmentedLowLevelRegexpEmptyMatch augmentedChild
+               else Set.empty
+       }
+
+
+augmentLowLevelRegexpAddTags
+  :: Set (UniqueID, Set UniqueID)
+  -> Set UniqueID
+  -> Set (UniqueID, Set UniqueID)
+augmentLowLevelRegexpAddTags positionTagSetPairSet newTagSet
+  = Set.map (\(position, tagSet) ->
+               (position, Set.union tagSet newTagSet))
+            positionTagSetPairSet
 
 
 regexpsToNFA
@@ -591,13 +687,11 @@ regexpsToNFA regexps tagIDUniquenessPurpose leafPositionUniquenessPurpose = do
   lowLevelRegexp <- regexpsToLowLevelRegexp regexps
                                             tagIDUniquenessPurpose
                                             leafPositionUniquenessPurpose
-  foo <- return $ unsafePerformIO $ debugLowLevelRegexp lowLevelRegexp
-  {-
-  let augmentedLowLevelRegexp = augmentLowLevelRegexp lowLevelRegexpx
-  bar <- return $ unsafePerformIO $ debugAugmentedLowLevelRegexp lowLevelRegexp
-  -}
+  -- _ <- return $ unsafePerformIO $ debugLowLevelRegexp lowLevelRegexp
+  let augmentedLowLevelRegexp = augmentLowLevelRegexp lowLevelRegexp
+  -- _ <- return $ unsafePerformIO $ debugAugmentedLowLevelRegexp lowLevelRegexp
   emptyNFA <- emptyAutomaton Nothing
-  return $ seq foo emptyNFA
+  return emptyNFA
 
 
 debugLowLevelRegexp
