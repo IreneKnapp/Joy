@@ -88,12 +88,13 @@ DeclarationList :: { [Declaration] }
         (KeywordMonad lineNumber, ClientCode _ body)
           -> $1 ++ [MonadDeclaration lineNumber $ ClientType body] }
     
-    | DeclarationList user MaybeInitial lexer name identifier
-    { case ($2, $3, $6) of
-        (KeywordUser lineNumber, (_, maybeInitial), Identifier _ name)
+    | DeclarationList user MaybeInitial lexer clientCode MaybeName
+    { case ($2, $3, $5) of
+        (KeywordUser lineNumber, (_, maybeInitial), ClientCode _ body)
           -> $1 ++ [UserLexerDeclaration lineNumber
                                          maybeInitial
-                                         name] }
+                                         (ClientIdentifier body)
+                                         $6] }
     
     | DeclarationList error_ clientCode
     { case ($2, $3) of
@@ -304,7 +305,8 @@ data Declaration = MonadDeclaration LineNumber ClientType
                  | ErrorDeclaration LineNumber ClientExpression
                  | UserLexerDeclaration LineNumber
                                         Bool
-                                        String
+                                        ClientIdentifier
+                                        (Maybe String)
                  | LexerDeclaration LineNumber
                                     Bool
                                     Bool
@@ -329,7 +331,7 @@ data Declaration = MonadDeclaration LineNumber ClientType
 instance Located Declaration where
     location (MonadDeclaration result _) = result
     location (ErrorDeclaration result _) = result
-    location (UserLexerDeclaration result _ _) = result
+    location (UserLexerDeclaration result _ _ _) = result
     location (LexerDeclaration result _ _ _ _ _) = result
     location (TokensDeclaration result _ _) = result
     location result@(NonterminalDeclaration { })

@@ -1,6 +1,7 @@
 module Joy.Client (
                    ClientRaw(..),
                    ClientType(..),
+                   ClientIdentifier(..),
                    ClientExpression(..),
                    ClientAction(..),
                    clientExpressionSubstitute
@@ -18,6 +19,9 @@ data ClientRaw = ClientRaw LineNumber String
 
 
 data ClientType = ClientType String
+
+
+data ClientIdentifier = ClientIdentifier String
 
 
 data ClientExpression = ClientExpression String

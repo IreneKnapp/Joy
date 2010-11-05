@@ -334,14 +334,14 @@ processLexerDeclarations :: Generation ()
 processLexerDeclarations = do
   state <- get
   let declarations = filter (\declaration -> case declaration of
-                               UserLexerDeclaration _ _ _ -> True
+                               UserLexerDeclaration _ _ _ _ -> True
                                LexerDeclaration _ _ _ _ _ _ -> True
                                _ -> False)
                             $ specificationDeclarations
                             $ fromJust
                             $ generationStateMaybeSpecification state
       initialDeclarations = filter (\declaration -> case declaration of
-                                     UserLexerDeclaration _ True _ -> True
+                                     UserLexerDeclaration _ True _ _ -> True
                                      LexerDeclaration _ True _ _ _ _ -> True
                                      _ -> False)
                                    $ specificationDeclarations
@@ -371,12 +371,13 @@ processLexerDeclarations = do
                 ++ (englishList $ map (show . location) initialDeclarations)
   let defaultLexerName = "joy_lexer"
       initialName = case initialDeclaration of
-        UserLexerDeclaration _ _ name -> name
+        UserLexerDeclaration _ _ _ maybeName -> maybe defaultLexerName id maybeName
         LexerDeclaration _ _ _ maybeName _ _ -> maybe defaultLexerName id maybeName
       namesAndLines = map (\declaration -> case declaration of
-                            UserLexerDeclaration lineNumber _ name -> (name, lineNumber)
+                            UserLexerDeclaration lineNumber _ _ maybeName
+                              -> (maybe defaultLexerName id maybeName, lineNumber)
                             LexerDeclaration lineNumber _ _ maybeName _ _
-                                -> (maybe defaultLexerName id maybeName, lineNumber))
+                              -> (maybe defaultLexerName id maybeName, lineNumber))
                           declarations
       nonuniqueNames = map fst
                        $ deleteFirstsBy ((==) `on` fst)
@@ -399,14 +400,16 @@ processLexerDeclarations = do
                 ++ "."
     else return ()
   let userDeclarations = filter (\declaration -> case declaration of
-                                  UserLexerDeclaration _ _ _ -> True
+                                  UserLexerDeclaration _ _ _ _ -> True
                                   _ -> False)
                                 declarations
       nonuserDeclarations = filter (\declaration -> case declaration of
                                      LexerDeclaration _ _ _ _ _ _ -> True
                                      _ -> False)
                                    declarations
-      userNames = map (\(UserLexerDeclaration _ _ name) -> name) userDeclarations
+      userNames = map (\(UserLexerDeclaration _ _ _ maybeName) ->
+                        maybe defaultLexerName id maybeName)
+                      userDeclarations
       nameDefinitionMap
           = Map.fromList
             $ map (\(LexerDeclaration _ _ binaryFlag maybeName maybeParent definition)

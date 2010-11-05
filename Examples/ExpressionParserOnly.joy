@@ -7,7 +7,7 @@ import Control.Monad.Error
 MONAD { Parse }
 ERROR { parseError }
 
-USER LEXER NAME lexer
+USER LEXER { lexer }
 
 TOKEN TYPE { Token } NAMES
 | integer       { Integer $$ }
