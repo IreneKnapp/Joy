@@ -240,21 +240,21 @@ NonterminalDeclaration :: { Declaration }
                         }
     }
 
-NonterminalDeclarationParserList :: { (Maybe LineNumber, [(Bool, ClientExpression)]) }
+NonterminalDeclarationParserList :: { (Maybe LineNumber, [(Bool, ClientIdentifier)]) }
     :
     { (Nothing, []) }
     | NonterminalDeclarationParserList parser clientCode
     { case ($1, $2, $3) of
         ((Nothing, start), KeywordParser lineNumber, ClientCode _ body)
-          -> (Just lineNumber, start ++ [(False, ClientExpression body)])
+          -> (Just lineNumber, start ++ [(False, ClientIdentifier body)])
         ((Just lineNumber, start), _, ClientCode _ body)
-          -> (Just lineNumber, start ++ [(False, ClientExpression body)]) }
+          -> (Just lineNumber, start ++ [(False, ClientIdentifier body)]) }
     | NonterminalDeclarationParserList partial parser clientCode
     { case ($1, $2, $4) of
         ((Nothing, start), KeywordPartial lineNumber, ClientCode _ body)
-          -> (Just lineNumber, start ++ [(True, ClientExpression body)])
+          -> (Just lineNumber, start ++ [(True, ClientIdentifier body)])
         ((Just lineNumber, start), _, ClientCode _ body)
-          -> (Just lineNumber, start ++ [(True, ClientExpression body)]) }
+          -> (Just lineNumber, start ++ [(True, ClientIdentifier body)]) }
 
 NonterminalDeclarationRightHandSideList :: { [([GrammarSymbol], ClientAction)] }
     : NonterminalDeclarationRightHandSide
@@ -326,7 +326,7 @@ data Declaration = MonadDeclaration LineNumber ClientType
                      nonterminalDeclarationType
                          :: ClientType,
                      nonterminalDeclarationParsers
-                         :: [(Bool, ClientExpression)],
+                         :: [(Bool, ClientIdentifier)],
                      nonterminalDeclarationRightHandSides
                          :: [([GrammarSymbol], ClientAction)]
                    }

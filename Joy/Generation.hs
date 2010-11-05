@@ -7,6 +7,8 @@ module Joy.Generation (
                        LexerInformation(..),
                        Lexer(..),
                        AnyLexer(..),
+                       ParserInformation(..),
+                       Production(..),
                        mkGenerationState,
                        runGeneration,
                        generate
@@ -65,8 +67,11 @@ data GenerationState = GenerationState {
         generationStateMaybePatternTerminalAlist :: Maybe [(ClientPattern,
                                                             GrammarSymbol)],
         generationStateMaybeNonterminals :: Maybe [GrammarSymbol],
-        generationStateMaybeProductions
-            :: Maybe [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
+        generationStateMaybeNonterminalTypeMap :: Maybe (Map GrammarSymbol
+                                                             ClientType),
+        generationStateMaybeProductions :: Maybe [Production],
+        generationStateMaybeParserInformationMap
+          :: Maybe (Map GrammarSymbol ParserInformation)
       }
 
 
@@ -80,8 +85,19 @@ data LexerInformation = LexerInformation {
 
 type Lexer content = DFA (EnumSet content) (Maybe (Maybe ClientExpression)) ()
 
+
 data AnyLexer = forall content . (Ord content, Bounded content, Enum content) =>
                 Lexer (Lexer content)
+
+
+data ParserInformation = ParserInformation {
+    parserInformationGrammarSymbol :: GrammarSymbol,
+    parserInformationPartial :: Bool,
+    parserInformationClientIdentifier :: ClientIdentifier
+  }
+
+
+data Production = Production GrammarSymbol [GrammarSymbol] ClientAction
 
 
 mkGenerationState :: FilePath -> FilePath -> GenerationState
@@ -100,7 +116,9 @@ mkGenerationState inputFilename outputFilename
         generationStateMaybeTerminalPatternMap = Nothing,
         generationStateMaybePatternTerminalAlist = Nothing,
         generationStateMaybeNonterminals = Nothing,
-        generationStateMaybeProductions = Nothing
+        generationStateMaybeNonterminalTypeMap = Nothing,
+        generationStateMaybeProductions = Nothing,
+        generationStateMaybeParserInformationMap = Nothing
       }
 
 
@@ -513,6 +531,60 @@ processTokensDeclaration = do
 
 processNonterminalDeclarations :: Generation ()
 processNonterminalDeclarations = do
+  state <- get
+  let declarations = filter (\declaration -> case declaration of
+                                               NonterminalDeclaration { } -> True
+                                               _ -> False)
+                            $ specificationDeclarations
+                            $ fromJust
+                            $ generationStateMaybeSpecification state
+      nonterminals
+        = map (\declaration -> nonterminalDeclarationGrammarSymbol declaration)
+              declarations
+      nonterminalTypeMap
+        = Map.fromList
+          $ map (\declaration ->
+                   (nonterminalDeclarationGrammarSymbol declaration,
+                    nonterminalDeclarationType declaration))
+                declarations
+      productions
+        = concat
+          $ map (\declaration ->
+                   let leftHandSide
+                         = nonterminalDeclarationGrammarSymbol declaration
+                       rightHandSidesAndClientActions
+                         = nonterminalDeclarationRightHandSides declaration
+                   in map (\(rightHandSide, clientAction)
+                             -> Production leftHandSide
+                                           rightHandSide
+                                           clientAction)
+                          rightHandSidesAndClientActions)
+                declarations
+      parserInformationMap
+        = Map.fromList
+          $ concat
+          $ map (\declaration ->
+                   let leftHandSide
+                         = nonterminalDeclarationGrammarSymbol declaration
+                       parsers
+                         = nonterminalDeclarationParsers declaration
+                   in map (\(partial, clientIdentifier)
+                             -> (leftHandSide,
+                                 ParserInformation {
+                                   parserInformationGrammarSymbol
+                                     = leftHandSide,
+                                   parserInformationPartial = partial,
+                                   parserInformationClientIdentifier
+                                     = clientIdentifier
+                                 }))
+                          parsers)
+                declarations
+  put $ state {
+          generationStateMaybeNonterminals = Just nonterminals,
+          generationStateMaybeNonterminalTypeMap = Just nonterminalTypeMap,
+          generationStateMaybeProductions = Just productions,
+          generationStateMaybeParserInformationMap = Just parserInformationMap
+        }
   return ()
 
 
