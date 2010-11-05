@@ -183,21 +183,23 @@ LexerDefinitionList :: { [LexerDefinitionItem] }
                                              (Just $ ClientExpression body)] }
 
 
-TokenDefinitionList :: { [(GrammarSymbol, String)] }
+TokenDefinitionList :: { [(GrammarSymbol, ClientPattern)] }
     :
     { [] }
     | TokenDefinitionList '|' identifier clientCode
     {% case ($3, $4) of
          (Identifier terminalLineNumber terminal, ClientCode _ body)
            -> if isLower $ head terminal
-              then return $ $1 ++ [(IdentifierTerminal terminal, body)]
+              then return $ $1 ++ [(IdentifierTerminal terminal,
+                                    ClientPattern body)]
               else throwParseError
                        $ "Terminal must begin with a lowercase letter at line "
                          ++ (show terminalLineNumber) }
     | TokenDefinitionList '|' string clientCode
     { case ($3, $4) of
          (StringLiteral _ terminal, ClientCode _ body)
-           -> $1 ++ [(StringTerminal terminal, body)] }
+           -> $1 ++ [(StringTerminal terminal,
+                      ClientPattern body)] }
 
 
 NonterminalDeclaration :: { Declaration }
@@ -313,7 +315,9 @@ data Declaration = MonadDeclaration LineNumber ClientType
                                     (Maybe String)
                                     (Maybe String)
                                     [LexerDefinitionItem]
-                 | TokensDeclaration LineNumber ClientType [(GrammarSymbol, String)]
+                 | TokensDeclaration LineNumber
+                                     ClientType
+                                     [(GrammarSymbol, ClientPattern)]
                  | NonterminalDeclaration {
                      nonterminalDeclarationLineNumber
                          :: LineNumber,
@@ -353,7 +357,7 @@ instance Located LexerDefinitionItem where
 data GrammarSymbol = IdentifierTerminal String
                    | StringTerminal String
                    | Nonterminal String
-                     deriving (Eq)
+                     deriving (Eq, Ord)
 
 
 data SpecificationParseError = SpecificationParseError {

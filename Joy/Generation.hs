@@ -60,6 +60,10 @@ data GenerationState = GenerationState {
         generationStateMaybeTokenType :: Maybe ClientType,
         generationStateMaybeAnyParsersSpecified :: Maybe Bool,
         generationStateMaybeTerminals :: Maybe [GrammarSymbol],
+        generationStateMaybeTerminalPatternMap :: Maybe (Map GrammarSymbol
+                                                             ClientPattern),
+        generationStateMaybePatternTerminalAlist :: Maybe [(ClientPattern,
+                                                            GrammarSymbol)],
         generationStateMaybeNonterminals :: Maybe [GrammarSymbol],
         generationStateMaybeProductions
             :: Maybe [(GrammarSymbol, [GrammarSymbol], ClientExpression)]
@@ -93,6 +97,8 @@ mkGenerationState inputFilename outputFilename
         generationStateMaybeTokenType = Nothing,
         generationStateMaybeAnyParsersSpecified = Nothing,
         generationStateMaybeTerminals = Nothing,
+        generationStateMaybeTerminalPatternMap = Nothing,
+        generationStateMaybePatternTerminalAlist = Nothing,
         generationStateMaybeNonterminals = Nothing,
         generationStateMaybeProductions = Nothing
       }
@@ -488,7 +494,19 @@ processTokensDeclaration = do
     [] -> fail $ "Missing TOKENS declaration."
     [TokensDeclaration _ clientType definitions]
         -> do
-             put $ state { generationStateMaybeTokenType = Just clientType }
+             let terminals = map fst definitions
+                 terminalPatternMap = Map.fromList definitions
+                 patternTerminalAlist
+                   = map (\(terminal, pattern) -> (pattern, terminal))
+                         definitions
+             put $ state {
+                      generationStateMaybeTokenType = Just clientType,
+                      generationStateMaybeTerminals = Just terminals,
+                      generationStateMaybeTerminalPatternMap
+                        = Just terminalPatternMap,
+                      generationStateMaybePatternTerminalAlist
+                        = Just patternTerminalAlist
+                    }
     _ -> fail $ "Multiple TOKENS declarations, at lines "
                 ++ (englishList $ map (show . location) declarations)
 
