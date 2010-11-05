@@ -1,0 +1,78 @@
+LANGUAGE Joy/1.0 Haskell
+module Main where
+
+import Control.Monad.Error
+import Control.Monad.State
+
+--
+MONAD { Parse }
+ERROR { parseError }
+TOKEN TYPE { Token }
+
+LEXER NAME lexer
+| '[0-9]+'               { Integer $ read $0 }
+| '\+'                   { Plus }
+| '-'	                 { Minus }
+| '\*'	                 { Star }
+| '/'	                 { Slash }
+| '\('	                 { LeftParenthesis }
+| '\)'	                 { RightParenthesis }
+| '[ \t\n\r\f\v]+'       WHITESPACE
+
+--
+
+type Parse = ErrorT ParseError (State String)
+
+
+data Token = Integer Int
+           | Plus
+           | Minus
+           | Star
+           | Slash
+           | LeftParenthesis
+           | RightParenthesis
+	     deriving (Show)
+
+
+data ParseError = ParseError String
+instance Error ParseError where
+    strMsg message = ParseError message
+instance Show ParseError where
+    show (ParseError string) = string
+
+
+instance MonadLexer Parse Char where
+  peekInput offset = do
+    input <- lift get
+    if offset < length input
+      then return $ Just $ head $ drop offset input
+      else return Nothing
+  consumeInput count = do
+    input <- lift get
+    let result = take count input
+    lift $ put $ drop count input
+    return result
+
+
+main :: IO ()
+main =
+  let loop = do
+        line <- getLine
+        case line of
+          "" -> return ()
+          _ -> do
+            let eitherErrorResult = evalState (runErrorT $
+                                                 let loop = do
+                                                       maybeToken <- lexer
+                                                       case maybeToken of
+                                                         Nothing -> return []
+                                                         Just token -> do
+                                                           rest <- loop
+                                                           return $ [token] ++ rest
+                                                 in loop)
+                                              line
+            case eitherErrorResult of
+              Left error -> putStrLn $ "Parse error: " ++ (show error)
+              Right result -> putStrLn $ "Result: " ++ (show result)
+            loop
+  in loop

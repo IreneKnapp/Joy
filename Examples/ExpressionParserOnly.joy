@@ -1,0 +1,92 @@
+LANGUAGE Joy/1.0 Haskell
+module Main where
+
+import Control.Monad.Error
+
+--
+MONAD { Parse }
+ERROR { parseError }
+
+USER LEXER NAME lexer
+
+TOKEN TYPE { Token } NAMES
+| integer       { Integer $$ }
+| '+'           { Plus }
+| '-'           { Minus }
+| '*'           { Star }
+| '/'           { Slash }
+| '('           { LeftParenthesis }
+| ')'           { RightParenthesis }
+
+PARSER { parseExpression }
+Expression :: { Int }
+    | Term
+    { $1 }
+    | Expression '+' Term
+    { $1 + $3 }
+    | Expression '-' Term
+    { $1 - $3 }
+
+Term :: { Int }
+    | Factor
+    { $1 }
+    | Term '*' Factor
+    { $1 * $3 }
+    | Term '/' Factor
+    { $1 / $3 }
+
+Factor :: { Int }
+    | integer
+    { $1 }
+    | '(' Expression ')'
+    { $2 }
+
+--
+
+type Parse = Error ParseError
+
+
+data Token = Integer Int
+           | Plus
+           | Minus
+           | Star
+           | Slash
+           | LeftParenthesis
+           | RightParenthesis
+
+
+data ParseError = ParseError String
+instance Error ParseError where
+    strMsg message = ParseError message
+instance Show ParseError where
+    show (ParseError string) = string
+
+
+lexer :: String -> Parse (Maybe (Token, String))
+lexer "" = return Nothing
+lexer ('+':rest) = return $ Just (Plus, rest)
+lexer ('-':rest) = return $ Just (Minus, rest)
+lexer ('*':rest) = return $ Just (Star, rest)
+lexer ('/':rest) = return $ Just (Slash, rest)
+lexer ('(':rest) = return $ Just (LeftParenthesis, rest)
+lexer (')':rest) = return $ Just (RightParenthesis, rest)
+lexer all@(c:_)
+  | isDigit c = return $ Just (Integer $ read $ takeWhile isDigit all,
+    	      	       	       dropWhile isDigit all)
+  | isSpace c = lexer $ drop 1 all
+  | otherwise = throwError $ ParseError $ "Unexpected character " ++ show c ++ "."
+
+
+main :: IO ()
+main = do
+  let loop = do
+        line <- getLine
+        case line of
+          "" -> return ()
+          _ -> do
+            eitherErrorResult = runError (parseExpression line)
+            case eitherErrorResult of
+              Left error -> putStrLn $ "Parse error: " ++ (show error)
+              Right result -> putStrLn $ "Result: " ++ (show result)
+            loop
+  loop

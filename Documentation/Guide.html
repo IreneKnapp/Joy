@@ -1,0 +1,455 @@
+<!DOCTYPE html 
+     PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+     "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<head>
+<meta name="viewport" content="initial-scale = 1.0" />
+<title>Joy Lexer/Parser-Generator Guide</title>
+<style type="text/css">
+body {
+  margin: 0;
+  padding-bottom: 2em;
+}
+
+h1, h2, h3, h4, h5 {
+  text-indent: -4.0em;
+  padding-left: 4.75em;
+}
+
+h1 {
+  background-color: #fcc;
+  border-top: solid red 4px;
+  border-bottom: solid red 4px;
+  margin-top: 1.5em;
+}
+
+h2, h3 {
+  background-color: #ccf;
+  border-top: solid blue 2px;
+  border-bottom: solid blue 2px;
+}
+
+h4 {
+  background-color: #cfc;
+  padding-top: 0.5em;
+  padding-bottom: 0.5em;
+}
+
+p {
+  margin-left: 1.0em;
+  padding-right: 2.0em;
+  text-indent: 1.5em;
+  line-height: 150%;
+}
+
+ul {
+  list-style: none;
+  padding-left: 2.5em;
+}
+
+ul ul {
+  padding-left: 1.5em;
+}
+
+dl {
+  margin-left: 1.0em;
+  padding-left: 0;
+}
+
+dt {
+  font-weight: bold;
+}
+
+dd {
+  margin-left: 1.5em;
+  text-indent: 0;
+}
+
+* + dt {
+  margin-top: 0.5em;
+}
+
+ul.contents {
+  padding-left: 0.5em;
+}
+
+ul.contents > li {
+  margin-left: 2.5em;
+  text-indent: -2.5em;
+}
+
+ul.contents a {
+  text-decoration: none;
+}
+
+ul.bibliography > li {
+  margin-left: 0;
+  text-indent: 1.5em;
+  line-height: 150%;
+}
+
+ul.bibliography > li {
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+  padding-right: 2.0em;
+}
+
+ul.bibliography > li > a.citekey {
+  font-weight: bold;
+}
+
+ul.bibliography > li > span.authors {
+}
+
+ul.bibliography > li > span.authors > span.author {
+}
+
+ul.bibliography > li > span.title {
+  font-style: italic;
+}
+
+ul.bibliography > li > span.booktitle {
+  font-style: italic;
+}
+
+ul.bibliography > li > span.address {
+}
+
+ul.bibliography > li > span.publisher {
+}
+
+ul.bibliography > li > span.school {
+}
+
+ul.bibliography > li > span.journal {
+  font-style: italic;
+}
+
+ul.bibliography > li > span.volume {
+}
+
+ul.bibliography > li > span.year {
+}
+
+ul.bibliography > li > span.pages {
+}
+
+table {
+  margin-left: 2.5em;
+}
+
+th {
+  text-align: left;
+}
+
+td, th {
+  padding-left: 0.75em;
+  padding-right: 0.75em;
+}
+
+td:first-child, th:first-child {
+  padding-left: 0;
+}
+
+td:last-child, th:last-child {
+  padding-right: 0;
+}
+
+.code, h4 {
+  font-family: 'Courier New';
+}
+
+div.code {
+  border: double black 4px;
+  background-color: #afa;
+  color: #080;
+  font-weight: bold;
+  padding: 0.75em;
+  margin-left: 2em;
+  max-width: 60em;
+  white-space: pre;
+  overflow: auto;
+}
+
+div.command {
+  margin-left: 2.5em;
+  padding: 0.75em;
+  border: double gray 3px;
+  background-color: #ffc;
+  max-width: 80ex;
+  font-family: Courier New, fixed;
+  white-space: pre;
+  overflow: auto;
+}
+
+div.blockquote {
+  border: solid gray 1px;
+  margin-left: 2.5em;
+  margin-right: 2.5em;
+}
+
+div.title {
+  font-size: 200%;
+  text-align: center;
+  margin: 25px;
+}
+</style>
+</head>
+<body>
+
+<div class="title"><img src="Joy.png" /><br />Joy Lexer/Parser Generator</div>
+
+<h1>Contents</h1>
+<ul class="contents">
+<li><a href="#S_introduction"><b>1.</b> Introduction</a> <ul>
+<li><a href="#S_introduction_downloads"><b>1.1.</b> Downloads</a></li>
+<li><a href="#S_introduction_licensing"><b>1.2.</b> Licensing and its Ramifications for Deployment</a></li>
+<li><a href="#S_introduction_organization"><b>1.3.</b> Organization of this Manual</a></li>
+</ul></li>
+<li><a href="#S_semantics"><b>2.</b> Semantics</a> <ul>
+<li><a href="#S_lexing"><b>2.1.</b> Lexing</a> <ul>
+</ul></li>
+<li><a href="#S_parsing"><b>2.2.</b> Parsing</a> <ul>
+</ul></li>
+</ul></li>
+<li><a href="#S_haskell"><b>3.</b> Using Joy with Haskell</a> <ul>
+<li><a href="#S_haskell_sample"><b>3.1.</b> Sample Programs</a> <ul>
+<li><a href="#S_haskell_sample_expression"><b>3.1.1.</b> A trivial expression evaluator</a></li>
+</ul></li>
+</ul></li>
+<li><a href="#S_bibliography"><b>Bibliography</b></a></li>
+</ul>
+
+<a name="S_introduction"><h1>1. Introduction</h1></a>
+
+<p>Joy is an integration of a lexer generator based on transition-augmented
+deterministic finite automata without backtracking, and a parser generator using
+shift-reduce with a table produced by a hybrid of the LALR(1) algorithm with flexible
+lookahead so that it is able to process LALR(k) grammars.  It features a backend
+targeting Haskell, and is itself written in Haskell.</p>
+
+
+<a name="S_introduction_downloads"><h2>1.1. Downloads</h2></a>
+
+<p>Joy is packaged with Haskell's Cabal packaging system, and can be cabal-installed
+with the command:</p>
+
+<div class="command">cabal install joy</div>
+
+<p>Unreleased versions of it are available through Darcs, and can be obtained with
+the command:</p>
+
+<div class="command">darcs get <a href="http://dankna.com/software/darcs/Joy/">http://dankna.com/software/darcs/Joy/</a></div>
+
+<p>Precompiled binaries are not available at this time.</p>
+
+
+<a name="S_introduction_licensing"><h2>1.3. Licensing and its Ramifications for Deployment</h2></a>
+
+<p>Joy itself is under the BSD license.  Portions of Joy's logic are incorporated into
+your program; these portions are hereby released into the public domain, which means you
+may do with them anything you wish.  In jurisdictions where there is no concept of
+public domain, these portions are hereby placed under the same license as Joy itself.</p>
+
+<p>The intention of this licensing is to make Joy suitable for both commercial and
+noncommercial projects, and to allow free modification of it by anybody.  Note, however,
+that as a personal request from me the developer, I ask that you not use the Joy name if
+you create your own version.  I have not formally trademarked it, but it would be poor
+form.</p>
+
+<p>The exact terms of the license are as follows:</p>
+
+<div class="blockquote">
+<p>Copyright (c) 2010 Dan Knapp</p>
+
+<p>Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:</p>
+
+<p>The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.</p>
+
+<p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.</p>
+</div>
+
+
+<a name="S_introduction_organization"><h2>1.3. Organization of this Manual</h2></a>
+
+<p>This manual is divided into this introductory chapter, the semantics chapter,
+and one chapter for each backend of Joy.  Each backend chapter has its own tutorial and
+reference sections.  There is significant duplication between chapters; in particular,
+the repertoire of sample programs is the same in each to the extent that this makes
+sense.  The thinking is that this allows you to pretend that Joy is written only for
+your favorite language, with examples which need not be converted in your head because
+they are already written for that language.</p>
+
+<p>You should feel free to ignore the chapters which do not pertain to you.</p>
+
+
+<a name="S_semantics"><h1>2. Semantics</h1></a>
+
+<p>Joy is an integrated lexer/parser generator.  What this means is that Joy can
+generate any number of lexers as well as any number of parsers from the same input
+file.  The use of a single input file avoids the traditional need of Yacc to run after
+Lex so that the list of token values can be provided, or the alternate need to construct
+the list of tokens separately and maintain it by hand.</p>
+
+<p>It is often useful to define multiple lexers, say for different contexts of the same
+grammar; there is an inheritance facility provided so that one lexer can be based on
+another but add additional expressions.  There is no facility to unlist expressions in
+an inheriting lexer, but this can be simulated by adding a common parent which contains
+a subset of the expressions.</p>
+
+<p>It is also useful to define multiple parsers on the same grammar, say one for
+statements and one for expressions, or perhaps both for the same construct but one
+preserving whitespace and one not.  For this reason the <span class="CODE">PARSER</span>
+declaration attaches to a nonterminal definition rather than being in the header of
+the input file.  This substantially reduces repetition when there are many parsers, and
+is also clearer to read.</p>
+
+
+<a name="S_semantics_lexing"><h1>2.1. Lexing</h1></a>
+
+<p>The lexical-analysis part of Joy is based on transition-augmented deterministic
+finite automata without backtracking, as described in
+<a href="#S_bibliography_laurikari2000">[laurikari2000]</a> and
+<a href="#S_bibliography_laurikari2001">[laurikari2001]</a>.  It also implements
+positive- and negative- lookahead and lookbehind assertions, as described in
+<a href="#S_bibliography_becchi_crowley2008">[becchi-crowley2008]</a>.  The integration
+of Laurikari's strategy using TDFAs without backtracking with Becchi and Crowley's
+assertions, which they define in terms of epsilon-NFAs with backtracking, is original
+research performed by me, and is unpublished.  Interested readers are referred to the
+source code.</p>
+
+<p>The fact that the lexer doesn't backtrack means that it can lex any regular
+expression.  For example, Perl places the restriction that you can't do
+<span class="code">(a*)*</span> because this would have exponential complexity.  Joy,
+however, handles it just fine, in the same linear complexity as it handles anything
+else.  It is also the case that Perl and PCRE have worse-than-linear complexity in both
+space and time as the size of the regular expression grows; in contrast, Joy's algorithm
+can handle very large expressions.  Joy is not the only regular expression engine to
+use this linear-time algorithm, but it is the only one I am aware of which acts as a
+full lexical analyzer, processing multiple expressions to break input into a series of
+tokens.</p>
+
+<p>You may have noticed that this versatility creates ambiguity:  Of the many possible
+ways for a given regular expression to match a given string, which do we choose?  The
+lexer uses three rules to resolve this:<p>
+
+<dl>
+<dt>Leftmost longest</dt>
+<dd>Prefer matches starting earlier in the string.  Of all which are still tied among
+these, prefer matches ending later in the string.  This rule applies both to each
+expression as a whole, and to each subexpression.  A match against the empty string
+is still a match, and is preferred over no match at all.</dd>
+<dt>Earlier subexpressions</dt>
+<dd>Prefer subexpressions starting earlier in the expression over ones starting later.
+Prefer parent subexpressions over their children.</dd>
+<dt>Last repeated match</dt>
+<dd>When a given subexpression matches multiple times in the same string, prefer the
+last match.</dd>
+</dl>
+
+<p>For example, consider matching <span class="code">(a*)</span> against
+<span class="code">aaa</span>.  There are ten possible substrings which could be
+matched: the empty string at four different positions; the string
+<span class="code">a</span> at three different positions; the string
+<span class="code">aa</span> at two different positions; and the entire string
+<span class="code">aaa</span>.  Of all these, we note that the earliest offset at which
+a match is possible is the very beginning of the string.  By the "leftmost" part of
+leftmost-longest, we narrow our candidates to just four.  Of these we note that the
+greatest length posible is the entire string.  By the "longest" part, we narrow our
+candidates to one.</p>
+
+<p>Now consider matching <span class="code">(a*)(a*)</span> against
+that same input <span class="code">aaa</span>.  There are the same ten possible
+substrings for the entire expression to match.  By the same process as above, we
+determine that we will match the entire string.  But this says nothing about which
+subexpression will match which part of it!  There are still four possible ways we could
+match:
+(empty, <span class="code">aaa</span>),
+(<span class="code">a</span>, <span class="code">aa</span>),
+(<span class="code">aa</span>, <span class="code">a</span>),
+(<span class="code">aaa</span>, empty).
+By the "earlier subexpressions" rule, we know that the first
+<span class="code">(a*)</span> takes precedence over the second.  Thus we choose the
+last of these possibilities.</p>
+
+<p>Finally, consider matching <span class="code">(a|a*)*</span> against, again, the
+input <span class="code">aaa</span>.  By the leftmost-longest rule, we know that we will
+match the entire string.  By the subexpression rule, we know that we will match
+<span class="code">a</span> in preference to <span class="code">a*</span>.  But in
+that case, we match the subexpression three times - once for each character.  What
+portion of the input do we bind the captured variable to?  It would be sensible to
+choose the first match, or the last match, or even to return a list of all matches.
+What we do is choose the last match, matching against the third instance of
+<span class="code">a</span>.  This is the last-repeated-match rule.</p>
+
+
+<!--
+<a name="S_semantics_parsing"><h1>2.2. Parsing</h1></a>
+
+
+<a name="S_haskell"><h1>3. Using Joy with Haskell</h1></a>
+<a name="S_haskell_sample"><h2>3.1. Sample Programs</h2></a>
+<a name="S_haskell_sample_expression"><h2>3.1.1. A trivial expression evaluator</h2></a>
+
+<p>I know this is the only documentation a lot of you will read, so without further
+preamble:</p>
+
+<div class="code">
+</div>
+
+
+<a name="S_bibliography"><h1>Bibliography</h1></a>
+
+<ul class="bibliography">
+
+<li>
+<a class="citekey" name="S_bibliography_becchi_crowley2008">[becchi-crowley2008]</a>
+<span class="authors"><span class="author">Becchi, Michela</span> and <span class="author">Crowley, Patrick</span>.</span>
+<span class="title">Extending Finite Automata to Efficiently Match Perl-Compatible Regular Expressions</span>.
+<span class="booktitle">CoNEXT '08: Proceedings of the 2008 ACM CoNEXT Conference</span>.
+<span class="address">New York</span>:
+<span class="publisher">ACM</span>
+<span class="year">2008</span>.
+<span class="pages">1-12</span>.
+<a class="doi" href="http://dx.doi.org/10.1145/1544012.1544037">doi:10.1145/1544012.1544037</a>
+<a class="url" href="http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.154.6795">&lt;Citeseer&gt;</a>
+</li>
+
+<li><a class="citekey" name="S_bibliography_laurikari2000">[laurikari2000]</a>
+<span class="authors"><span class="author">Laurikari, Ville</span>.</span>
+<span class="title">NFAs with Tagged Transitions, their Conversion to Deterministic Automata and Application to Regular Expressions</span>.
+<span class="journal">String Processing and Information Retrieval, International Symposium on</span>
+<span class="volume">0</span>
+<span class="year">(2000)</span>
+<span class="pages">181-187</span>.
+<a class="doi" href="http://dx.doi.org/10.1109/SPIRE.2000.878194">doi:10.1109/SPIRE.2000.878194</a>
+<a class="url" href="http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.29.4395">&lt;Citeseer&gt;</a>.
+</li>
+
+<li><a class="citekey" name="S_bibliography_laurikari2001">[laurikari2001]</a>
+<span class="authors"><span class="author">Laurikari, Ville</span>.</span>
+<span class="title">Efficient submatch addressing for regular expressions</span>.
+<span class="school">Helsinki University of Technology</span>
+<span class="year">2001</span>.
+<a class="url" href="http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.23.6717">&lt;Citeseer&gt;</a>.
+</li>
+
+</ul>
+-->
+</body>
+</html>
