@@ -310,6 +310,12 @@ debugParseTable = do
            liftIO $ putStrLn $ "Production " ++ (show productionID) ++ ": "
                                ++ (show production))
         $ Map.toList productionDebugInfo
+  liftIO $ putStrLn ""
+  mapM_ (\(symbol, stateID) -> do
+           liftIO $ putStrLn $ "Start state for parsing " ++ (show symbol)
+                               ++ " is " ++ (show stateID) ++ ".")
+        $ Map.toList $ case parseTable of
+                         ParseTable startStateMap _ -> startStateMap
   mapM_ (\(stateID, actionMap) -> do
            liftIO $ putStrLn ""
            liftIO $ putStrLn $ "State " ++ (show stateID) ++ ":"
@@ -326,7 +332,7 @@ debugParseTable = do
                           actionList)
                  $ Map.toList actionMap)
         $ Map.toList $ case parseTable of
-                         ParseTable transitionMap -> transitionMap
+                         ParseTable _ transitionMap -> transitionMap
 
 
 generate :: Generation ()

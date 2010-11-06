@@ -70,7 +70,8 @@ data ParseAction = Shift StateID
                    deriving (Show)
 
 
-data ParseTable = ParseTable (Map StateID (Map GrammarSymbol [ParseAction]))
+data ParseTable = ParseTable (Map GrammarSymbol StateID)
+                             (Map StateID (Map GrammarSymbol [ParseAction]))
                   deriving (Show)
 
 
@@ -128,8 +129,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
       symbolNullable symbol
         = fromJust $ Map.lookup symbol symbolNullableMap
       
-      computeLR0ParseTable :: Map (Set Item)
-                                  (Map GrammarSymbol [InternalParseAction])
+      computeLR0ParseTable :: (Map GrammarSymbol (Set Item),
+                               [(Set Item,
+                                 Map GrammarSymbol [InternalParseAction])])
       computeLR0ParseTable =
         let loop [] _ resultSoFar = resultSoFar
             loop (state:rest) visitedStates resultSoFar =
@@ -155,42 +157,83 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                   newStatesToVisit
                     = Set.elems $ Set.difference newStates visitedStates
                   visitedStates' = Set.insert state visitedStates
-                  resultSoFar' = Map.insert state actionMap resultSoFar
+                  resultSoFar' = resultSoFar ++ [(state, actionMap)]
               in loop (rest ++ newStatesToVisit)
                       visitedStates'
                       resultSoFar'
-        in loop startStates Set.empty Map.empty
+            startStateMap = computeStartStateMap
+            startStates = Map.elems startStateMap
+        in (startStateMap,
+            loop startStates Set.empty [])
       
-      startStates :: [Set Item]
-      startStates =
-        catMaybes
+      computeStartStateMap :: Map GrammarSymbol (Set Item)
+      computeStartStateMap =
+        Map.fromList
+        $ catMaybes
         $ map (\symbol ->
                  let productions = productionsOfSymbol symbol
                      items = map (\production -> Item production 0) productions
-                 in computeClosureOfItems items)
+                 in fmap (\state -> (symbol, state))
+                         $ computeItemsClosure items)
               startSymbols
       
       computeNextState :: Set Item -> GrammarSymbol -> Maybe (Set Item)
       computeNextState state symbol =
-        computeClosureOfItems
-        $ concat
-          $ map (\(Item production@(Production _ rightHandSide _) index) ->
-                   if (index < length rightHandSide)
-                      && ((head $ drop index rightHandSide) == symbol)
-                     then [Item production (index + 1)]
-                     else [])
-                $ Set.elems state
+        computeItemsClosure
+         $ computeItemsAfterAdvancingSymbol (Set.elems state) symbol
       
-      computeClosureOfItems :: [Item] -> Maybe (Set Item)
-      computeClosureOfItems items =
+      computeItemsAfterAdvancingSymbol :: [Item] -> GrammarSymbol -> [Item]
+      computeItemsAfterAdvancingSymbol items symbol =
+        concat
+         $ map (\(Item production@(Production _ rightHandSide _) index) ->
+                  if (index < length rightHandSide)
+                     && ((head $ drop index rightHandSide) == symbol)
+                    then [Item production (index + 1)]
+                    else [])
+               items
+      
+      computeItemsClosure :: [Item] -> Maybe (Set Item)
+      computeItemsClosure items =
         let loop [] visitedItems resultSoFar = resultSoFar
-            loop (item:rest) visitedItems resultSoFar =
-              let newItems = Set.empty -- TODO
-                  newItemsToVisit
-                    = Set.elems $ Set.difference newItems visitedItems
-                  visitedItems' = Set.union newItems visitedItems
-                  resultSoFar' = Set.union newItems resultSoFar
-              in loop (rest ++ newItemsToVisit) visitedItems' resultSoFar'
+            loop (item@(Item production@(Production leftHandSide
+                                                    rightHandSides
+                                                    _)
+                             index)
+                  : rest)
+                 visitedItems
+                 resultSoFar
+              = let maybeNextSymbol =
+                      if index < length rightHandSides
+                        then Just $ head $ drop index rightHandSides
+                        else Nothing
+                    newItemsByLookingInside =
+                      case maybeNextSymbol of
+                        Nothing -> []
+                        Just nextSymbol -> map (\production -> Item production 0)
+                                               $ productionsOfSymbol nextSymbol
+                    newItemsByAdvancingPast =
+                      case maybeNextSymbol of
+                        Nothing -> []
+                        Just nextSymbol
+                          | symbolNullable nextSymbol
+                            -> [Item production $ index + 1]
+                          | otherwise
+                            -> []
+                    newItemsByTakingLeft =
+                      case maybeNextSymbol of
+                        Nothing -> computeItemsAfterAdvancingSymbol
+                                    (Set.elems resultSoFar)
+                                    leftHandSide
+                        Just _ -> []
+                    newItems = Set.fromList
+                                $ concat [newItemsByLookingInside,
+                                          newItemsByAdvancingPast,
+                                          newItemsByTakingLeft]
+                    newItemsToVisit
+                      = Set.elems $ Set.difference newItems visitedItems
+                    visitedItems' = Set.union newItems visitedItems
+                    resultSoFar' = Set.union newItems resultSoFar
+                in loop (rest ++ newItemsToVisit) visitedItems' resultSoFar'
             result = loop items Set.empty $ Set.fromList items
         in if Set.null result
            then Nothing
@@ -203,27 +246,29 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         let lr0ParseTable = computeLR0ParseTable
         in externalizeParseTable lr0ParseTable
       
-      externalizeParseTable :: Map (Set Item)
-                                   (Map GrammarSymbol [InternalParseAction])
+      externalizeParseTable :: (Map GrammarSymbol (Set Item),
+                                [(Set Item,
+                                  Map GrammarSymbol [InternalParseAction])])
                             -> (ParseTable,
                                 Map StateID (Set Item),
                                 Map ProductionID Production)
-      externalizeParseTable internalParseTable =
-        let allStates = Map.keys internalParseTable
+      externalizeParseTable (startStateMap, transitionMap) =
+        let allStates = map fst transitionMap
             stateIDMap = Map.fromList $ zip allStates [0..]
             stateID state = fromJust $ Map.lookup state stateIDMap
             idStateMap = Map.fromList $ zip [0..] allStates
         in (ParseTable
-            $ Map.fromList
-            $ map (\(state, actionMap) ->
-                     (stateID state,
-                      Map.map (map (\action ->
-                                      case action of
-                                        InternalShift state -> Shift $ stateID state
-                                        InternalReduce production
-                                          -> Reduce $ productionID production))
-                              actionMap))
-                  $ Map.toList internalParseTable,
+             (Map.map stateID startStateMap)
+             $ Map.fromList
+             $ map (\(state, actionMap) ->
+                      (stateID state,
+                       Map.map (map (\action ->
+                                       case action of
+                                         InternalShift state -> Shift $ stateID state
+                                         InternalReduce production
+                                           -> Reduce $ productionID production))
+                               actionMap))
+                   transitionMap,
             idStateMap,
             idProductionMap)
       
