@@ -23,6 +23,8 @@ import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Word
@@ -35,6 +37,7 @@ import Joy.Client
 import Joy.Documentation
 import Joy.EnumSet (EnumSet)
 import qualified Joy.EnumSet as EnumSet
+import Joy.LALR1
 import Joy.Uniqueness
 import Joy.Regexp
 import Joy.Specification
@@ -71,7 +74,12 @@ data GenerationState = GenerationState {
                                                              ClientType),
         generationStateMaybeProductions :: Maybe [Production],
         generationStateMaybeParserInformationMap
-          :: Maybe (Map GrammarSymbol ParserInformation)
+          :: Maybe (Map GrammarSymbol ParserInformation),
+        generationStateMaybeParseTable :: Maybe ParseTable,
+        generationStateMaybeParseTableStateDebugInfo
+          :: Maybe (Map StateID (Set Item)),
+        generationStateMaybeParseTableProductionDebugInfo
+          :: Maybe (Map ProductionID Production)
       }
 
 
@@ -97,9 +105,6 @@ data ParserInformation = ParserInformation {
   }
 
 
-data Production = Production GrammarSymbol [GrammarSymbol] ClientAction
-
-
 mkGenerationState :: FilePath -> FilePath -> GenerationState
 mkGenerationState inputFilename outputFilename
     = GenerationState {
@@ -118,7 +123,10 @@ mkGenerationState inputFilename outputFilename
         generationStateMaybeNonterminals = Nothing,
         generationStateMaybeNonterminalTypeMap = Nothing,
         generationStateMaybeProductions = Nothing,
-        generationStateMaybeParserInformationMap = Nothing
+        generationStateMaybeParserInformationMap = Nothing,
+        generationStateMaybeParseTable = Nothing,
+        generationStateMaybeParseTableStateDebugInfo = Nothing,
+        generationStateMaybeParseTableProductionDebugInfo = Nothing
       }
 
 
@@ -288,6 +296,39 @@ debugIntermediateAutomaton automaton = do
         $ automatonStates automaton
 
 
+debugParseTable :: Generation ()
+debugParseTable = do
+  GenerationState {
+      generationStateMaybeParseTable = Just parseTable,
+      generationStateMaybeParseTableStateDebugInfo = Just stateDebugInfo,
+      generationStateMaybeParseTableProductionDebugInfo
+        = Just productionDebugInfo
+    } <- get
+  liftIO $ putStrLn $ "PARSE TABLE"
+  liftIO $ putStrLn ""
+  mapM_ (\(productionID, production) -> do
+           liftIO $ putStrLn $ "Production " ++ (show productionID) ++ ": "
+                               ++ (show production))
+        $ Map.toList productionDebugInfo
+  mapM_ (\(stateID, actionMap) -> do
+           liftIO $ putStrLn ""
+           liftIO $ putStrLn $ "State " ++ (show stateID) ++ ":"
+           mapM_ (\item -> do
+                    liftIO $ putStrLn $ "  " ++ (show item))
+                 $ Set.elems $ fromJust $ Map.lookup stateID stateDebugInfo
+           liftIO $ putStrLn $ "  "
+           mapM_ (\(symbol, actionList) -> do
+                    mapM_ (\action -> do
+                             liftIO $ putStrLn $ "  "
+                                                 ++ (show symbol)
+                                                 ++ " => " 
+                                                 ++ (show action))
+                          actionList)
+                 $ Map.toList actionMap)
+        $ Map.toList $ case parseTable of
+                         ParseTable transitionMap -> transitionMap
+
+
 generate :: Generation ()
 generate = do
   readSpecification
@@ -296,6 +337,8 @@ generate = do
   -- debugEarlyGenerationState
   compileLexers
   -- debugLexers
+  compileParsers
+  debugParseTable
   writeOutput
 
 
@@ -684,6 +727,26 @@ compileLexer regexpStringResultTuples subexpressionTuples binaryFlag = do
     True -> do
       dfa <- compileLexer'
       return $ Lexer (dfa :: Lexer Word8)
+
+
+compileParsers :: Generation ()
+compileParsers = do
+  state@GenerationState {
+                   generationStateMaybeParserInformationMap
+                     = Just parserInformationMap,
+                   generationStateMaybeTerminals = Just terminals,
+                   generationStateMaybeNonterminals = Just nonterminals,
+                   generationStateMaybeProductions = Just productions
+                 } <- get
+  let startSymbols = Map.keys parserInformationMap
+      (parseTable, stateDebugInfo, productionDebugInfo)
+        = compileParseTable nonterminals terminals productions startSymbols
+  put $ state {
+          generationStateMaybeParseTable = Just parseTable,
+          generationStateMaybeParseTableStateDebugInfo = Just stateDebugInfo,
+          generationStateMaybeParseTableProductionDebugInfo
+            = Just productionDebugInfo
+        }
 
 
 writeOutput :: Generation ()

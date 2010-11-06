@@ -357,7 +357,13 @@ instance Located LexerDefinitionItem where
 data GrammarSymbol = IdentifierTerminal String
                    | StringTerminal String
                    | Nonterminal String
+                   | EndOfInputSymbol
                      deriving (Eq, Ord)
+instance Show GrammarSymbol where
+  show (IdentifierTerminal string) = string
+  show (StringTerminal string) = "'" ++ string ++ "'"
+  show (Nonterminal string) = string
+  show EndOfInputSymbol = "#"
 
 
 data SpecificationParseError = SpecificationParseError {
