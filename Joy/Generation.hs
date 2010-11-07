@@ -305,6 +305,27 @@ debugParseTable = do
         = Just productionDebugInfo
     } <- get
   liftIO $ putStrLn $ "PARSE TABLE"
+  let conflicts =
+        filter (\(_, _, actionList) -> length actionList > 1)
+               $ concat
+                 $ map (\(stateID, actionMap) ->
+                          map (\(symbol, actionList) ->
+                                 (stateID, symbol, actionList))
+                              $ Map.toList actionMap)
+                       $ Map.toList
+                         $ case parseTable of
+                             ParseTable _ transitionMap -> transitionMap
+  if not $ null conflicts
+    then do
+      liftIO $ putStrLn ""
+      liftIO $ putStrLn $ (show $ length conflicts) ++ " conflicts:"
+      mapM_ (\(stateID, symbol, actionList) -> do
+               liftIO $ putStrLn $ "State " ++ show stateID ++ " on "
+                                   ++ show symbol ++ " => "
+                                   ++ (intercalate ", "
+                                                   $ map show actionList))
+            conflicts
+    else return ()
   liftIO $ putStrLn ""
   mapM_ (\(productionID, production) -> do
            liftIO $ putStrLn $ "Production " ++ (show productionID) ++ ": "
@@ -324,12 +345,11 @@ debugParseTable = do
                  $ Set.elems $ fromJust $ Map.lookup stateID stateDebugInfo
            liftIO $ putStrLn $ "  "
            mapM_ (\(symbol, actionList) -> do
-                    mapM_ (\action -> do
-                             liftIO $ putStrLn $ "  "
-                                                 ++ (show symbol)
-                                                 ++ " => " 
-                                                 ++ (show action))
-                          actionList)
+                    liftIO $ putStrLn $ "  "
+                                        ++ (show symbol)
+                                        ++ " => "
+                                        ++ (intercalate ", "
+                                                        $ map show actionList))
                  $ Map.toList actionMap)
         $ Map.toList $ case parseTable of
                          ParseTable _ transitionMap -> transitionMap
