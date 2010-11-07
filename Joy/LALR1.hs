@@ -226,8 +226,65 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                  Map StateID (Set Item),
                                  Map ProductionID Production)
       computeLALR1ParseTable =
-        let lr0ParseTable = computeLR0ParseTable
-        in externalizeParseTable lr0ParseTable
+        let (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+              = externalizeParseTable computeLR0ParseTable
+            directReadSetMap = computeDirectReadSetMap lr0ParseTable
+        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+      
+      computeDirectReadSetMap :: ParseTable
+                              -> Map (StateID, GrammarSymbol)
+                                     (Set GrammarSymbol)
+      computeDirectReadSetMap (ParseTable _ transitionMap) =
+        let computeDirectReadSet :: StateID -> GrammarSymbol -> Set GrammarSymbol
+            computeDirectReadSet state nonterminal =
+              case computeMaybeResultingState state nonterminal of
+                Nothing -> Set.empty
+                Just resultingState ->
+                  Set.fromList $ map fst
+                                     $ filter transitionIsTerminalShift
+                                              $ Map.toList
+                                                $ fromJust
+                                                  $ Map.lookup resultingState
+                                                               transitionMap
+            
+            transitionIsTerminalShift :: (GrammarSymbol, [ParseAction])
+                                      -> Bool
+            transitionIsTerminalShift (foundSymbol, actionList) =
+              let isTerminal = case foundSymbol of
+                                 Nonterminal _ -> False
+                                 EndOfInputSymbol -> False
+                                 IdentifierTerminal _ -> True
+                                 StringTerminal _ -> True
+                  isShift = any (\action -> case action of
+                                              Shift _ -> True
+                                              Reduce _ -> False)
+                                actionList
+              in isTerminal && isShift
+            
+            computeMaybeResultingState :: StateID -> GrammarSymbol -> Maybe StateID
+            computeMaybeResultingState state nonterminal =
+              let maybeActionList =
+                    Map.lookup nonterminal
+                               $ fromJust $ Map.lookup state transitionMap
+              in case maybeActionList of
+                   Nothing -> Nothing
+                   Just actionList ->
+                     foldl (\maybeResult action ->
+                              case maybeResult of
+                                Nothing -> case action of
+                                             Shift result -> Just result
+                                             _ -> Nothing
+                                Just result -> Just result)
+                           Nothing
+                           actionList
+        in Map.fromList
+           $ concat
+           $ map (\state ->
+                    map (\nonterminal ->
+                           ((state, nonterminal),
+                            computeDirectReadSet state nonterminal))
+                        nonterminals)
+                 $ Map.keys transitionMap
       
       externalizeParseTable :: (Map GrammarSymbol (Set Item),
                                 [(Set Item,
