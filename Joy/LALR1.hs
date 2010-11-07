@@ -211,24 +211,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                         Nothing -> []
                         Just nextSymbol -> map (\production -> Item production 0)
                                                $ productionsOfSymbol nextSymbol
-                    newItemsByAdvancingPast =
-                      case maybeNextSymbol of
-                        Nothing -> []
-                        Just nextSymbol
-                          | symbolNullable nextSymbol
-                            -> [Item production $ index + 1]
-                          | otherwise
-                            -> []
-                    newItemsByTakingLeft =
-                      case maybeNextSymbol of
-                        Nothing -> computeItemsAfterAdvancingSymbol
-                                    (Set.elems resultSoFar)
-                                    leftHandSide
-                        Just _ -> []
-                    newItems = Set.fromList
-                                $ concat [newItemsByLookingInside,
-                                          newItemsByAdvancingPast,
-                                          newItemsByTakingLeft]
+                    newItems = Set.fromList newItemsByLookingInside
                     newItemsToVisit
                       = Set.elems $ Set.difference newItems visitedItems
                     visitedItems' = Set.union newItems visitedItems
