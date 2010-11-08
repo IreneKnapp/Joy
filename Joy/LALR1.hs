@@ -230,7 +230,13 @@ compileParseTable nonterminals terminals allProductions startSymbols =
               = externalizeParseTable computeLR0ParseTable
             directReadSetMap = computeDirectReadSetMap lr0ParseTable
             nonterminalReadListMap = computeNonterminalReadListMap lr0ParseTable
-            -- readSetMap = computeReadSetMap directReadSetMap nonterminalReadListMap
+            nonterminalTransitionSet
+              = computeNonterminalTransitionSet lr0ParseTable
+                {-
+            readSetMap = digraph nonterminalTransitionSet
+                                 directReadSetMap
+                                 nonterminalReadListMap
+                                 -}
         in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
@@ -341,11 +347,27 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                             computeNonterminalReadList state nonterminal))
                         nonterminals)
                  $ Map.keys transitionMap
-
-      {-
-      computeReadSetMap :: Map (StateID, GrammarSymbol) (Set GrammarSymbol)
-                        -> Map (
-                        -}
+      
+      computeNonterminalTransitionSet :: ParseTable
+                                      -> Set (StateID, GrammarSymbol)
+      computeNonterminalTransitionSet (ParseTable _ transitionMap) =
+        let transitionIsShift :: (StateID, GrammarSymbol) -> Bool
+            transitionIsShift (state, nonterminal) =
+              let actionListMap = fromJust $ Map.lookup state transitionMap
+                  actionList = case Map.lookup nonterminal actionListMap of
+                                 Nothing -> []
+                                 Just actionList -> actionList
+              in any (\action -> case action of
+                                   Shift _ -> True
+                                   Reduce _ -> False)
+                     actionList
+        in Set.fromList
+           $ filter transitionIsShift
+                    $ concat
+                    $ map (\(state, actionListMap) ->
+                             map (\nonterminal -> (state, nonterminal))
+                                 $ Map.keys actionListMap)
+                          $ Map.toList transitionMap
       
       externalizeParseTable :: (Map GrammarSymbol (Set Item),
                                 [(Set Item,
@@ -374,3 +396,11 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             idProductionMap)
       
   in computeLALR1ParseTable
+
+
+{-
+digraph :: Set (StateID, GrammarSymbol)
+        -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
+        -> Map (StateID, GrammarSymbol) [(StateID, GrammarSymbol)]
+        -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
+-}
