@@ -232,11 +232,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             nonterminalReadListMap = computeNonterminalReadListMap lr0ParseTable
             nonterminalTransitionSet
               = computeNonterminalTransitionSet lr0ParseTable
-                {-
             readSetMap = digraph nonterminalTransitionSet
-                                 directReadSetMap
                                  nonterminalReadListMap
-                                 -}
+                                 directReadSetMap
         in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
@@ -296,21 +294,23 @@ compileParseTable nonterminals terminals allProductions startSymbols =
       
       computeNonterminalReadListMap :: ParseTable
                                     -> Map (StateID, GrammarSymbol)
-                                           [(StateID, GrammarSymbol)]
+                                           (Set (StateID, GrammarSymbol))
       computeNonterminalReadListMap (ParseTable _ transitionMap) =
         let computeNonterminalReadList :: StateID
                                        -> GrammarSymbol
-                                       -> [(StateID, GrammarSymbol)]
+                                       -> (Set (StateID, GrammarSymbol))
             computeNonterminalReadList state nonterminal =
               case computeMaybeResultingState state nonterminal of
-                Nothing -> []
+                Nothing -> Set.empty
                 Just resultingState ->
-                  map (\(foundNonterminal, _) -> (resultingState, foundNonterminal))
-                      $ filter transitionIsEpsilonNonterminalShift
-                               $ Map.toList
-                                 $ fromJust
-                                   $ Map.lookup resultingState
-                                                transitionMap
+                  Set.fromList
+                  $ map (\(foundNonterminal, _) ->
+                           (resultingState, foundNonterminal))
+                        $ filter transitionIsEpsilonNonterminalShift
+                                 $ Map.toList
+                                   $ fromJust
+                                     $ Map.lookup resultingState
+                                                  transitionMap
             
             transitionIsEpsilonNonterminalShift :: (GrammarSymbol, [ParseAction])
                                                 -> Bool
@@ -398,9 +398,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
   in computeLALR1ParseTable
 
 
-{-
 digraph :: Set (StateID, GrammarSymbol)
+        -> Map (StateID, GrammarSymbol) (Set (StateID, GrammarSymbol))
         -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
-        -> Map (StateID, GrammarSymbol) [(StateID, GrammarSymbol)]
         -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
--}
+digraph set relation inputFunction =
+  undefined
