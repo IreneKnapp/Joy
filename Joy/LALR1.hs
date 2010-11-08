@@ -229,6 +229,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         let (lr0ParseTable, stateDebugInfo, productionDebugInfo)
               = externalizeParseTable computeLR0ParseTable
             directReadSetMap = computeDirectReadSetMap lr0ParseTable
+            nonterminalReadListMap = computeNonterminalReadListMap lr0ParseTable
+            -- readSetMap = computeReadSetMap directReadSetMap nonterminalReadListMap
         in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
@@ -252,7 +254,6 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             transitionIsTerminalShift (foundSymbol, actionList) =
               let isTerminal = case foundSymbol of
                                  Nonterminal _ -> False
-                                 EndOfInputSymbol -> False
                                  IdentifierTerminal _ -> True
                                  StringTerminal _ -> True
                   isShift = any (\action -> case action of
@@ -277,6 +278,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                 Just result -> Just result)
                            Nothing
                            actionList
+        
         in Map.fromList
            $ concat
            $ map (\state ->
@@ -285,6 +287,65 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                             computeDirectReadSet state nonterminal))
                         nonterminals)
                  $ Map.keys transitionMap
+      
+      computeNonterminalReadListMap :: ParseTable
+                                    -> Map (StateID, GrammarSymbol)
+                                           [(StateID, GrammarSymbol)]
+      computeNonterminalReadListMap (ParseTable _ transitionMap) =
+        let computeNonterminalReadList :: StateID
+                                       -> GrammarSymbol
+                                       -> [(StateID, GrammarSymbol)]
+            computeNonterminalReadList state nonterminal =
+              case computeMaybeResultingState state nonterminal of
+                Nothing -> []
+                Just resultingState ->
+                  map (\(foundNonterminal, _) -> (resultingState, foundNonterminal))
+                      $ filter transitionIsEpsilonNonterminalShift
+                               $ Map.toList
+                                 $ fromJust
+                                   $ Map.lookup resultingState
+                                                transitionMap
+            
+            transitionIsEpsilonNonterminalShift :: (GrammarSymbol, [ParseAction])
+                                                -> Bool
+            transitionIsEpsilonNonterminalShift (foundSymbol, actionList) =
+              let isEpsilonNonterminal = symbolNullable foundSymbol
+                  isShift = any (\action -> case action of
+                                              Shift _ -> True
+                                              Reduce _ -> False)
+                                actionList
+              in isEpsilonNonterminal && isShift
+            
+            computeMaybeResultingState :: StateID -> GrammarSymbol -> Maybe StateID
+            computeMaybeResultingState state nonterminal =
+              let maybeActionList =
+                    Map.lookup nonterminal
+                               $ fromJust $ Map.lookup state transitionMap
+              in case maybeActionList of
+                   Nothing -> Nothing
+                   Just actionList ->
+                     foldl (\maybeResult action ->
+                              case maybeResult of
+                                Nothing -> case action of
+                                             Shift result -> Just result
+                                             _ -> Nothing
+                                Just result -> Just result)
+                           Nothing
+                           actionList
+            
+        in Map.fromList
+           $ concat
+           $ map (\state ->
+                    map (\nonterminal ->
+                           ((state, nonterminal),
+                            computeNonterminalReadList state nonterminal))
+                        nonterminals)
+                 $ Map.keys transitionMap
+
+      {-
+      computeReadSetMap :: Map (StateID, GrammarSymbol) (Set GrammarSymbol)
+                        -> Map (
+                        -}
       
       externalizeParseTable :: (Map GrammarSymbol (Set Item),
                                 [(Set Item,
