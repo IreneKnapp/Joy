@@ -8,8 +8,7 @@ module Joy.LALR1 (
                  )
     where
 
-import Control.Monad.Error
-import Control.Monad.Identity
+import Control.Monad.State
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -235,7 +234,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             readSetMap = digraph nonterminalTransitionSet
                                  nonterminalReadListMap
                                  directReadSetMap
-        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+        in traceShow readSetMap (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
                               -> Map (StateID, GrammarSymbol)
@@ -398,9 +397,132 @@ compileParseTable nonterminals terminals allProductions startSymbols =
   in computeLALR1ParseTable
 
 
-digraph :: Set (StateID, GrammarSymbol)
-        -> Map (StateID, GrammarSymbol) (Set (StateID, GrammarSymbol))
-        -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
-        -> Map (StateID, GrammarSymbol) (Set GrammarSymbol)
+data DigraphState item functionResult = DigraphState {
+    digraphStateStack :: [item],
+    digraphStateDepthMap :: Map item DigraphDepth,
+    digraphStateOutputFunction :: Map item (Set functionResult)
+  }
+type Digraph item functionResult = State (DigraphState item functionResult)
+data DigraphDepth = IntegralDepth Int
+                  | InfiniteDepth
+                    deriving (Eq)
+instance Ord DigraphDepth where
+  compare (IntegralDepth a) (IntegralDepth b) = compare a b
+  compare (IntegralDepth _) InfiniteDepth = LT
+  compare InfiniteDepth (IntegralDepth _) = GT
+  compare InfiniteDepth InfiniteDepth = EQ
+
+
+digraph :: (Ord item, Ord functionResult)
+        => Set item
+        -> Map item (Set item)
+        -> Map item (Set functionResult)
+        -> Map item (Set functionResult)
 digraph set relation inputFunction =
-  undefined
+  let traverseAll = do
+        countRemaining
+          <- foldM (\total item -> do
+                      depth <- getItemDepth item
+                      if depth == IntegralDepth 0
+                        then do
+                          traverse item
+                          return $ total + 1
+                        else return total)
+                   0
+                   $ Set.elems set
+        if countRemaining > 0
+          then traverseAll
+          else return ()
+      
+      traverse item = do
+        stackPush item
+        depth <- getStackDepth
+        setItemDepth item $ IntegralDepth depth
+        assignOutputFunctionResults item
+                                    $ case Map.lookup item inputFunction of
+                                        Nothing -> Set.empty
+                                        Just results -> results
+        mapM_ (\otherItem -> do
+                 otherDepth <- getItemDepth otherItem
+                 if otherDepth == IntegralDepth 0
+                   then traverse otherItem
+                   else return ()
+                 depth' <- getItemDepth item
+                 otherDepth' <- getItemDepth otherItem
+                 setItemDepth item $ min depth' otherDepth'
+                 newResults <- getOutputFunctionResults otherItem
+                 unionOutputFunctionResults item newResults)
+              $ case Map.lookup item relation of
+                  Just otherItemSet -> Set.elems otherItemSet
+                  Nothing -> []
+        depth' <- getItemDepth item
+        if IntegralDepth depth == depth'
+          then do
+            itemResults <- getOutputFunctionResults item
+            let loop = do
+                  topItem <- stackPop
+                  setItemDepth topItem InfiniteDepth
+                  assignOutputFunctionResults topItem itemResults
+                  if topItem == item
+                    then return ()
+                    else loop
+            loop
+          else return ()
+      
+      initialState = DigraphState {
+                       digraphStateStack = [],
+                       digraphStateDepthMap
+                         = Map.fromList
+                           $ map (\item -> (item, IntegralDepth 0))
+                                 $ Set.elems set,
+                       digraphStateOutputFunction = Map.empty
+                     }
+      
+      stackPush item = do
+        state@DigraphState { digraphStateStack = stack } <- get
+        let stack' = item : stack
+        put $ state { digraphStateStack = stack' }
+      stackPop = do
+        state@DigraphState { digraphStateStack = stack } <- get
+        let (result : stack') = stack
+        put $ state { digraphStateStack = stack' }
+        return result
+      getStackDepth = do
+        DigraphState { digraphStateStack = stack } <- get
+        return $ length stack
+      
+      getItemDepth item = do
+        DigraphState { digraphStateDepthMap = depthMap } <- get
+        return $ fromJust $ Map.lookup item depthMap
+      setItemDepth item newDepth = do
+        state@DigraphState { digraphStateDepthMap = depthMap } <- get
+        let depthMap' = Map.insert item newDepth depthMap
+        put $ state { digraphStateDepthMap = depthMap' }
+      
+      getInputFunctionResults item = do
+        return $ case Map.lookup item inputFunction of
+                   Nothing -> Set.empty
+                   Just results -> results
+      
+      getOutputFunctionResults item = do
+        DigraphState {
+                      digraphStateOutputFunction = outputFunction
+                    } <- get
+        return $ case Map.lookup item outputFunction of
+                   Nothing -> Set.empty
+                   Just results -> results
+      assignOutputFunctionResults item results = do
+        state@DigraphState {
+                      digraphStateOutputFunction = outputFunction
+                    } <- get
+        let outputFunction'
+              = Map.insert item results outputFunction
+        put $ state { digraphStateOutputFunction = outputFunction' }
+      unionOutputFunctionResults item results = do
+        state@DigraphState {
+                      digraphStateOutputFunction = outputFunction
+                    } <- get
+        let outputFunction'
+              = Map.insertWith Set.union item results outputFunction
+        put $ state { digraphStateOutputFunction = outputFunction' }
+  in digraphStateOutputFunction $ execState traverseAll initialState
