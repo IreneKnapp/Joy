@@ -234,7 +234,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             readSetMap = digraph nonterminalTransitionSet
                                  nonterminalReadListMap
                                  directReadSetMap
-        in traceShow readSetMap (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+            (includesSetMap, lookbackSetMap) =
+              computeIncludesAndLookbackSetMaps lr0ParseTable
+        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
                               -> Map (StateID, GrammarSymbol)
@@ -367,6 +369,114 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                              map (\nonterminal -> (state, nonterminal))
                                  $ Map.keys actionListMap)
                           $ Map.toList transitionMap
+      
+      computeIncludesAndLookbackSetMaps
+        :: ParseTable
+        -> (Map (StateID, GrammarSymbol)
+                (Set (StateID, GrammarSymbol)),
+            Map (StateID, ProductionID)
+                (Set (StateID, GrammarSymbol)))
+      computeIncludesAndLookbackSetMaps (ParseTable _ transitionMap) =
+        let combineResults
+              :: [(Map (StateID, GrammarSymbol)
+                       (Set (StateID, GrammarSymbol)),
+                   Map (StateID, ProductionID)
+                       (Set (StateID, GrammarSymbol)))]
+              -> (Map (StateID, GrammarSymbol)
+                      (Set (StateID, GrammarSymbol)),
+                  Map (StateID, ProductionID)
+                      (Set (StateID, GrammarSymbol)))
+            combineResults results =
+              (foldl (Map.unionWith Set.union) Map.empty $ map fst results,
+               foldl (Map.unionWith Set.union) Map.empty $ map snd results)
+            visitAll :: (Map (StateID, GrammarSymbol)
+                             (Set (StateID, GrammarSymbol)),
+                         Map (StateID, ProductionID)
+                             (Set (StateID, GrammarSymbol)))
+            visitAll =
+              combineResults $ map visitState $ Map.keys transitionMap
+            visitState :: StateID
+                       -> (Map (StateID, GrammarSymbol)
+                               (Set (StateID, GrammarSymbol)),
+                           Map (StateID, ProductionID)
+                               (Set (StateID, GrammarSymbol)))
+            visitState state =
+              combineResults $ map (visitNonterminal state) nonterminals
+            visitNonterminal :: StateID
+                             -> GrammarSymbol
+                             -> (Map (StateID, GrammarSymbol)
+                                     (Set (StateID, GrammarSymbol)),
+                                 Map (StateID, ProductionID)
+                                     (Set (StateID, GrammarSymbol)))
+            visitNonterminal state nonterminal =
+              let actionListMap = fromJust $ Map.lookup state transitionMap
+                  actionList = case Map.lookup nonterminal actionListMap of
+                                 Nothing -> []
+                                 Just actionList -> actionList
+                  isShift = any (\action -> case action of
+                                              Shift _ -> True
+                                              Reduce _ -> False)
+                                actionList
+              in if isShift
+                   then combineResults $ map (visitProduction state nonterminal)
+                                             $ productionsOfSymbol nonterminal
+                   else (Map.empty, Map.empty)
+            visitProduction :: StateID
+                            -> GrammarSymbol
+                            -> Production
+                            -> (Map (StateID, GrammarSymbol)
+                                    (Set (StateID, GrammarSymbol)),
+                                Map (StateID, ProductionID)
+                                    (Set (StateID, GrammarSymbol)))
+            visitProduction state nonterminal production =
+              let Production _ rightHandSides _ = production
+                  (includeResults, foundState) =
+                    foldl (\(includeResults, foundState) (foundSymbol, index) ->
+                             let actionListMap
+                                   = fromJust $ Map.lookup foundState
+                                                           transitionMap
+                                 actionList =
+                                   case Map.lookup nonterminal actionListMap of
+                                     Nothing -> []
+                                     Just actionList -> actionList
+                                 Just foundState' =
+                                   foldl (\maybeResult action ->
+                                            case maybeResult of
+                                              Just _ -> maybeResult
+                                              Nothing ->
+                                                case action of
+                                                  Shift result -> Just result
+                                                  _ -> Nothing)
+                                         Nothing
+                                         actionList
+                                 remainingSymbols =
+                                   drop (index + 1) rightHandSides
+                                 notInOriginalState =
+                                   (state, nonterminal)
+                                   /= (foundState, foundSymbol)
+                                 remainderNullable
+                                   = all symbolNullable remainingSymbols
+                                 newIncludeResults =
+                                   if notInOriginalState && remainderNullable
+                                     then Map.singleton
+                                           (state, nonterminal)
+                                           $ Set.singleton
+                                              (foundState, foundSymbol)
+                                     else Map.empty
+                                 includeResults' =
+                                   Map.unionWith Set.union
+                                                 includeResults
+                                                 newIncludeResults
+                             in case foundSymbol of
+                                  Nonterminal _ -> (includeResults', foundState')
+                                  _ -> (includeResults, foundState'))
+                          (Map.empty, state)
+                          $ zip rightHandSides [0..]
+                  lookbackResults = Map.singleton
+                                     (foundState, productionID production)
+                                     $ Set.singleton (state, nonterminal) 
+              in (includeResults, lookbackResults)
+        in visitAll
       
       externalizeParseTable :: (Map GrammarSymbol (Set Item),
                                 [(Set Item,
