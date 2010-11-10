@@ -239,7 +239,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             followSetMap = digraph nonterminalTransitionSet
                                    includesSetMap
                                    readSetMap
-        in traceShow includesSetMap $ traceShow followSetMap (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
                               -> Map (StateID, GrammarSymbol)
@@ -465,9 +465,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                  newIncludeResults =
                                    if notInOriginalState && remainderNullable
                                      then Map.singleton
-                                           (state, nonterminal)
+                                           (foundState, foundSymbol)
                                            $ Set.singleton
-                                              (foundState, foundSymbol)
+                                              (state, nonterminal)
                                      else Map.empty
                                  includeResults' =
                                    Map.unionWith Set.union
@@ -609,10 +609,7 @@ digraph set relation inputFunction =
       
       getItemDepth item = do
         DigraphState { digraphStateDepthMap = depthMap } <- get
-        case Map.lookup item depthMap of
-          Nothing -> trace ("Argh!  " ++ (show item)) $ return undefined
-          Just depth -> return depth
-        -- return $ fromJust $ Map.lookup item depthMap
+        return $ fromJust $ Map.lookup item depthMap
       setItemDepth item newDepth = do
         state@DigraphState { digraphStateDepthMap = depthMap } <- get
         let depthMap' = Map.insert item newDepth depthMap
