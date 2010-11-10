@@ -221,6 +221,32 @@ compileParseTable nonterminals terminals allProductions startSymbols =
            then Nothing
            else Just result
       
+      externalizeParseTable :: (Map GrammarSymbol (Set Item),
+                                Map (Set Item)
+                                    (Map GrammarSymbol [InternalParseAction]))
+                            -> (ParseTable,
+                                Map StateID (Set Item),
+                                Map ProductionID Production)
+      externalizeParseTable (startStateMap, transitionMap) =
+        let allStates = Map.keys transitionMap
+            stateIDMap = Map.fromList $ zip allStates [0..]
+            stateID state = fromJust $ Map.lookup state stateIDMap
+            idStateMap = Map.fromList $ zip [0..] allStates
+        in (ParseTable
+             (Map.map stateID startStateMap)
+             $ Map.fromList
+             $ map (\(state, actionMap) ->
+                      (stateID state,
+                       Map.map (map (\action ->
+                                       case action of
+                                         InternalShift state -> Shift $ stateID state
+                                         InternalReduce production
+                                           -> Reduce $ productionID production))
+                               actionMap))
+                   $ Map.toList transitionMap,
+            idStateMap,
+            idProductionMap)
+      
       computeLALR1ParseTable :: (ParseTable,
                                  Map StateID (Set Item),
                                  Map ProductionID Production)
@@ -239,6 +265,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             followSetMap = digraph nonterminalTransitionSet
                                    includesSetMap
                                    readSetMap
+            lookaheadSetMap = computeLookaheadSetMap lookbackSetMap
+                                                     followSetMap
         in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
@@ -484,31 +512,15 @@ compileParseTable nonterminals terminals allProductions startSymbols =
               in (includeResults, lookbackResults)
         in visitAll
       
-      externalizeParseTable :: (Map GrammarSymbol (Set Item),
-                                Map (Set Item)
-                                    (Map GrammarSymbol [InternalParseAction]))
-                            -> (ParseTable,
-                                Map StateID (Set Item),
-                                Map ProductionID Production)
-      externalizeParseTable (startStateMap, transitionMap) =
-        let allStates = Map.keys transitionMap
-            stateIDMap = Map.fromList $ zip allStates [0..]
-            stateID state = fromJust $ Map.lookup state stateIDMap
-            idStateMap = Map.fromList $ zip [0..] allStates
-        in (ParseTable
-             (Map.map stateID startStateMap)
-             $ Map.fromList
-             $ map (\(state, actionMap) ->
-                      (stateID state,
-                       Map.map (map (\action ->
-                                       case action of
-                                         InternalShift state -> Shift $ stateID state
-                                         InternalReduce production
-                                           -> Reduce $ productionID production))
-                               actionMap))
-                   $ Map.toList transitionMap,
-            idStateMap,
-            idProductionMap)
+      computeLookaheadSetMap
+        :: Map (StateID, ProductionID)
+               (Set (StateID, GrammarSymbol))
+        -> Map (StateID, GrammarSymbol)
+               (Set GrammarSymbol)
+        -> Map (StateID, ProductionID)
+               (Set (StateID, GrammarSymbol))
+      computeLookaheadSetMap lookbackSetMap followSetMap =
+        undefined
       
   in computeLALR1ParseTable
 
