@@ -129,8 +129,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         = fromJust $ Map.lookup symbol symbolNullableMap
       
       computeLR0ParseTable :: (Map GrammarSymbol (Set Item),
-                               [(Set Item,
-                                 Map GrammarSymbol [InternalParseAction])])
+                               Map (Set Item)
+                                   (Map GrammarSymbol [InternalParseAction]))
       computeLR0ParseTable =
         let loop [] _ resultSoFar = resultSoFar
             loop (state:rest) visitedStates resultSoFar =
@@ -163,7 +163,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             startStateMap = computeStartStateMap
             startStates = Map.elems startStateMap
         in (startStateMap,
-            loop startStates Set.empty [])
+            Map.fromList $ loop startStates Set.empty [])
       
       computeStartStateMap :: Map GrammarSymbol (Set Item)
       computeStartStateMap =
@@ -228,15 +228,18 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         let (lr0ParseTable, stateDebugInfo, productionDebugInfo)
               = externalizeParseTable computeLR0ParseTable
             directReadSetMap = computeDirectReadSetMap lr0ParseTable
-            nonterminalReadListMap = computeNonterminalReadListMap lr0ParseTable
+            nonterminalReadSetMap = computeNonterminalReadSetMap lr0ParseTable
             nonterminalTransitionSet
               = computeNonterminalTransitionSet lr0ParseTable
             readSetMap = digraph nonterminalTransitionSet
-                                 nonterminalReadListMap
+                                 nonterminalReadSetMap
                                  directReadSetMap
             (includesSetMap, lookbackSetMap) =
               computeIncludesAndLookbackSetMaps lr0ParseTable
-        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+            followSetMap = digraph nonterminalTransitionSet
+                                   includesSetMap
+                                   readSetMap
+        in traceShow includesSetMap $ traceShow followSetMap (lr0ParseTable, stateDebugInfo, productionDebugInfo)
       
       computeDirectReadSetMap :: ParseTable
                               -> Map (StateID, GrammarSymbol)
@@ -293,14 +296,14 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                         nonterminals)
                  $ Map.keys transitionMap
       
-      computeNonterminalReadListMap :: ParseTable
+      computeNonterminalReadSetMap :: ParseTable
                                     -> Map (StateID, GrammarSymbol)
                                            (Set (StateID, GrammarSymbol))
-      computeNonterminalReadListMap (ParseTable _ transitionMap) =
-        let computeNonterminalReadList :: StateID
-                                       -> GrammarSymbol
-                                       -> (Set (StateID, GrammarSymbol))
-            computeNonterminalReadList state nonterminal =
+      computeNonterminalReadSetMap (ParseTable _ transitionMap) =
+        let computeNonterminalReadSet :: StateID
+                                      -> GrammarSymbol
+                                      -> (Set (StateID, GrammarSymbol))
+            computeNonterminalReadSet state nonterminal =
               case computeMaybeResultingState state nonterminal of
                 Nothing -> Set.empty
                 Just resultingState ->
@@ -345,7 +348,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
            $ map (\state ->
                     map (\nonterminal ->
                            ((state, nonterminal),
-                            computeNonterminalReadList state nonterminal))
+                            computeNonterminalReadSet state nonterminal))
                         nonterminals)
                  $ Map.keys transitionMap
       
@@ -439,7 +442,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                    case Map.lookup nonterminal actionListMap of
                                      Nothing -> []
                                      Just actionList -> actionList
-                                 Just foundState' =
+                                 maybeFoundState' =
                                    foldl (\maybeResult action ->
                                             case maybeResult of
                                               Just _ -> maybeResult
@@ -449,6 +452,9 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                                   _ -> Nothing)
                                          Nothing
                                          actionList
+                                 foundState' = case maybeFoundState' of
+                                                 Just foundState' -> foundState'
+                                                 Nothing -> foundState
                                  remainingSymbols =
                                    drop (index + 1) rightHandSides
                                  notInOriginalState =
@@ -479,13 +485,13 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         in visitAll
       
       externalizeParseTable :: (Map GrammarSymbol (Set Item),
-                                [(Set Item,
-                                  Map GrammarSymbol [InternalParseAction])])
+                                Map (Set Item)
+                                    (Map GrammarSymbol [InternalParseAction]))
                             -> (ParseTable,
                                 Map StateID (Set Item),
                                 Map ProductionID Production)
       externalizeParseTable (startStateMap, transitionMap) =
-        let allStates = map fst transitionMap
+        let allStates = Map.keys transitionMap
             stateIDMap = Map.fromList $ zip allStates [0..]
             stateID state = fromJust $ Map.lookup state stateIDMap
             idStateMap = Map.fromList $ zip [0..] allStates
@@ -500,7 +506,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                          InternalReduce production
                                            -> Reduce $ productionID production))
                                actionMap))
-                   transitionMap,
+                   $ Map.toList transitionMap,
             idStateMap,
             idProductionMap)
       
@@ -523,7 +529,7 @@ instance Ord DigraphDepth where
   compare InfiniteDepth InfiniteDepth = EQ
 
 
-digraph :: (Ord item, Ord functionResult)
+digraph :: (Ord item, Ord functionResult, Show item)
         => Set item
         -> Map item (Set item)
         -> Map item (Set functionResult)
@@ -603,7 +609,10 @@ digraph set relation inputFunction =
       
       getItemDepth item = do
         DigraphState { digraphStateDepthMap = depthMap } <- get
-        return $ fromJust $ Map.lookup item depthMap
+        case Map.lookup item depthMap of
+          Nothing -> trace ("Argh!  " ++ (show item)) $ return undefined
+          Just depth -> return depth
+        -- return $ fromJust $ Map.lookup item depthMap
       setItemDepth item newDepth = do
         state@DigraphState { digraphStateDepthMap = depthMap } <- get
         let depthMap' = Map.insert item newDepth depthMap
