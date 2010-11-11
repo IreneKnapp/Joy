@@ -21,8 +21,6 @@ import Joy.Client
 import Joy.Specification (GrammarSymbol(..))
 import Joy.Uniqueness
 
-import Debug.Trace
-
 
 data Production = Production GrammarSymbol [GrammarSymbol] ClientAction
 instance Eq Production where
@@ -80,7 +78,11 @@ compileParseTable :: [GrammarSymbol]
                   -> [GrammarSymbol]
                   -> (ParseTable,
                       Map StateID (Set Item),
-                      Map ProductionID Production)
+                      Map ProductionID Production,
+                      Map (StateID, GrammarSymbol)
+                          (Set (StateID, GrammarSymbol)),
+                      Map (StateID, ProductionID)
+                          (Set (StateID, GrammarSymbol)))
 compileParseTable nonterminals terminals allProductions startSymbols =
   let productionIDMap :: Map Production ProductionID
       productionIDMap = Map.fromList $ zip allProductions [0..]
@@ -249,7 +251,11 @@ compileParseTable nonterminals terminals allProductions startSymbols =
       
       computeLALR1ParseTable :: (ParseTable,
                                  Map StateID (Set Item),
-                                 Map ProductionID Production)
+                                 Map ProductionID Production,
+                                 Map (StateID, GrammarSymbol)
+                                     (Set (StateID, GrammarSymbol)),
+                                 Map (StateID, ProductionID)
+                                     (Set (StateID, GrammarSymbol)))
       computeLALR1ParseTable =
         let (lr0ParseTable, stateDebugInfo, productionDebugInfo)
               = externalizeParseTable computeLR0ParseTable
@@ -267,7 +273,14 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                    readSetMap
             lookaheadSetMap = computeLookaheadSetMap lookbackSetMap
                                                      followSetMap
-        in (lr0ParseTable, stateDebugInfo, productionDebugInfo)
+                                                     stateDebugInfo
+            lalr1ParseTable = filterReductionsByLookaheadSets lr0ParseTable
+                                                              lookaheadSetMap
+        in (lalr1ParseTable,
+            stateDebugInfo,
+            productionDebugInfo,
+            includesSetMap,
+            lookbackSetMap)
       
       computeDirectReadSetMap :: ParseTable
                               -> Map (StateID, GrammarSymbol)
@@ -467,7 +480,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                    = fromJust $ Map.lookup foundState
                                                            transitionMap
                                  actionList =
-                                   case Map.lookup nonterminal actionListMap of
+                                   case Map.lookup foundSymbol actionListMap of
                                      Nothing -> []
                                      Just actionList -> actionList
                                  maybeFoundState' =
@@ -517,10 +530,93 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                (Set (StateID, GrammarSymbol))
         -> Map (StateID, GrammarSymbol)
                (Set GrammarSymbol)
+        -> Map StateID (Set Item)
         -> Map (StateID, ProductionID)
-               (Set (StateID, GrammarSymbol))
-      computeLookaheadSetMap lookbackSetMap followSetMap =
-        undefined
+               (Set GrammarSymbol)
+      computeLookaheadSetMap lookbackSetMap followSetMap idStateMap =
+        let combineResults :: [Map (StateID, ProductionID)
+                                   (Set GrammarSymbol)]
+                           -> Map (StateID, ProductionID)
+                                  (Set GrammarSymbol)
+            combineResults results =
+              foldl (Map.unionWith Set.union) Map.empty results
+            visitAll :: Map (StateID, ProductionID)
+                            (Set GrammarSymbol)
+            visitAll =
+              combineResults $ map visitState $ Map.keys idStateMap
+            visitState :: StateID
+                       -> Map (StateID, ProductionID)
+                              (Set GrammarSymbol)
+            visitState state =
+              let finalItems =
+                    filter (\(Item (Production _ rightHandSides _) index)
+                              -> index == length rightHandSides)
+                           $ Set.elems $ fromJust $ Map.lookup state idStateMap
+              in combineResults $ map (\(Item production _) ->
+                                         visitProduction state
+                                                         $ productionID production)
+                                      finalItems
+            visitProduction :: StateID
+                            -> ProductionID
+                            -> Map (StateID, ProductionID)
+                                   (Set GrammarSymbol)
+            visitProduction state production =
+              let lookbacks = case Map.lookup (state, production) lookbackSetMap of
+                                Nothing -> Set.empty
+                                Just lookbacks -> lookbacks
+                  lookaheads = foldl Set.union
+                                     Set.empty
+                                     $ map (\lookback ->
+                                              case Map.lookup lookback followSetMap of
+                                                Nothing -> Set.empty
+                                                Just followSet -> followSet)
+                                           $ Set.elems lookbacks
+              in Map.singleton (state, production) lookaheads
+        in visitAll
+                 
+      filterReductionsByLookaheadSets
+        :: ParseTable
+        -> Map (StateID, ProductionID)
+               (Set GrammarSymbol)
+        -> ParseTable
+      filterReductionsByLookaheadSets (ParseTable startStateMap transitionMap)
+                                      lookaheadSetMap =
+        let visitAll :: Map StateID (Map GrammarSymbol [ParseAction])
+            visitAll =
+              foldl (\transitionMap state ->
+                       Map.updateWithKey visitState state transitionMap)
+                    transitionMap
+                    $ Map.keys transitionMap
+            visitState :: StateID
+                       -> Map GrammarSymbol [ParseAction]
+                       -> Maybe (Map GrammarSymbol [ParseAction])
+            visitState state actionListMap =
+              Just $ foldl (\actionListMap symbol ->
+                              Map.updateWithKey (visitSymbol state)
+                                                symbol
+                                                actionListMap)
+                           actionListMap
+                           $ Map.keys actionListMap
+            visitSymbol :: StateID
+                        -> GrammarSymbol
+                        -> [ParseAction]
+                        -> Maybe [ParseAction]
+            visitSymbol state symbol actionList =
+              Just $ filter (visitAction state symbol) actionList
+            visitAction :: StateID
+                        -> GrammarSymbol
+                        -> ParseAction
+                        -> Bool
+            visitAction state symbol action =
+              case action of
+                Shift _ -> True
+                Reduce production ->
+                  let lookaheadSet =
+                        case Map.lookup (state, production) lookaheadSetMap of
+                          Nothing -> Set.empty
+                          Just lookaheadSet -> lookaheadSet
+                  in Set.member symbol lookaheadSet
+        in ParseTable startStateMap visitAll
       
   in computeLALR1ParseTable
 

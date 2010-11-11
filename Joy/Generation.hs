@@ -79,7 +79,13 @@ data GenerationState = GenerationState {
         generationStateMaybeParseTableStateDebugInfo
           :: Maybe (Map StateID (Set Item)),
         generationStateMaybeParseTableProductionDebugInfo
-          :: Maybe (Map ProductionID Production)
+          :: Maybe (Map ProductionID Production),
+        generationStateMaybeParseTableIncludesRelationDebugInfo
+          :: Maybe (Map (StateID, GrammarSymbol)
+                        (Set (StateID, GrammarSymbol))),
+        generationStateMaybeParseTableLookbackRelationDebugInfo
+          :: Maybe (Map (StateID, ProductionID)
+                        (Set (StateID, GrammarSymbol)))
       }
 
 
@@ -126,7 +132,9 @@ mkGenerationState inputFilename outputFilename
         generationStateMaybeParserInformationMap = Nothing,
         generationStateMaybeParseTable = Nothing,
         generationStateMaybeParseTableStateDebugInfo = Nothing,
-        generationStateMaybeParseTableProductionDebugInfo = Nothing
+        generationStateMaybeParseTableProductionDebugInfo = Nothing,
+        generationStateMaybeParseTableIncludesRelationDebugInfo = Nothing,
+        generationStateMaybeParseTableLookbackRelationDebugInfo = Nothing
       }
 
 
@@ -765,13 +773,21 @@ compileParsers = do
                    generationStateMaybeProductions = Just productions
                  } <- get
   let startSymbols = Map.keys parserInformationMap
-      (parseTable, stateDebugInfo, productionDebugInfo)
+      (parseTable,
+       stateDebugInfo,
+       productionDebugInfo,
+       includesRelationDebugInfo,
+       lookbackRelationDebugInfo)
         = compileParseTable nonterminals terminals productions startSymbols
   put $ state {
           generationStateMaybeParseTable = Just parseTable,
           generationStateMaybeParseTableStateDebugInfo = Just stateDebugInfo,
           generationStateMaybeParseTableProductionDebugInfo
-            = Just productionDebugInfo
+            = Just productionDebugInfo,
+          generationStateMaybeParseTableIncludesRelationDebugInfo
+            = Just includesRelationDebugInfo,
+          generationStateMaybeParseTableLookbackRelationDebugInfo
+            = Just lookbackRelationDebugInfo
         }
 
 
