@@ -4,6 +4,7 @@ module Joy.LALR1 (
                   ProductionID(..),
                   StateID(..),
                   ParseTable(..),
+                  ParseAction(..),
                   compileParseTable
                  )
     where

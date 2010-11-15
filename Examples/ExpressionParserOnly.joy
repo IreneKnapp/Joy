@@ -1,7 +1,9 @@
 LANGUAGE Joy/1.0 Haskell
-module Main where
+module ExpressionParserOnly (main) where
 
 import Control.Monad.Error
+import Control.Monad.Identity
+import Data.Char
 
 --
 MONAD { Parse }
@@ -33,7 +35,7 @@ Term :: { Int }
     | Term '*' Factor
     { $1 * $3 }
     | Term '/' Factor
-    { $1 / $3 }
+    { $1 `div` $3 }
 
 Factor :: { Int }
     | integer
@@ -43,7 +45,7 @@ Factor :: { Int }
 
 --
 
-type Parse = Error ParseError
+type Parse = ErrorT ParseError Identity
 
 
 data Token = Integer Int
@@ -84,7 +86,8 @@ main = do
         case line of
           "" -> return ()
           _ -> do
-            eitherErrorResult = runError (parseExpression line)
+            let eitherErrorResult
+	          = runIdentity (runErrorT $ parseExpression line)
             case eitherErrorResult of
               Left error -> putStrLn $ "Parse error: " ++ (show error)
               Right result -> putStrLn $ "Result: " ++ (show result)

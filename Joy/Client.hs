@@ -5,7 +5,8 @@ module Joy.Client (
                    ClientIdentifier(..),
                    ClientExpression(..),
                    ClientAction(..),
-                   clientExpressionSubstitute
+                   clientExpressionSubstitute,
+                   clientPatternSubstituteWildcards
                   )
     where
 
@@ -47,5 +48,13 @@ clientExpressionSubstitute (ClientExpression input) =
         in case maybeIndex of
              Nothing -> "$" ++ firstWord ++ substitute rest'
              Just index -> "joy_" ++ (show index) ++ substitute rest'
+      substitute (c:rest) = c : substitute rest
+  in substitute input
+
+
+clientPatternSubstituteWildcards :: ClientPattern -> String
+clientPatternSubstituteWildcards (ClientPattern input) =
+  let substitute "" = ""
+      substitute ('$':'$':rest) = '_' : substitute rest
       substitute (c:rest) = c : substitute rest
   in substitute input
