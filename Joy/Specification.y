@@ -356,12 +356,16 @@ instance Located LexerDefinitionItem where
 
 data GrammarSymbol = IdentifierTerminal String
                    | StringTerminal String
+                   | EndTerminal
                    | Nonterminal String
+                   | StartNonterminal String
                      deriving (Eq, Ord)
 instance Show GrammarSymbol where
   show (IdentifierTerminal string) = string
   show (StringTerminal string) = "'" ++ string ++ "'"
+  show EndTerminal = "<End>"
   show (Nonterminal string) = string
+  show (StartNonterminal string) = "<Start-" ++ string ++ ">"
 
 
 data SpecificationParseError = SpecificationParseError {
@@ -719,7 +723,11 @@ readClientCode input = do
                               (result, rest) <- lex' depth rest
                               return ([c] ++ result, rest)
       lex' depth "" = throwParseError $ "Unexpected end of input in client code."
-  lex' 0 input
+      trim string = dropWhile isSpace
+                              $ reverse $ dropWhile isSpace
+                                                    $ reverse string
+  (result, rest) <- lex' 0 input
+  return (trim result, rest)
 
 
 skipBalancedComments :: String -> Parse String
