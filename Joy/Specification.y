@@ -45,7 +45,6 @@ import Joy.Documentation
         initial               { KeywordInitial _ }
         lexer                 { KeywordLexer _ }
         monad                 { KeywordMonad _ }
-        monadic               { KeywordMonadic _ }
         name                  { KeywordName _ }
         names                 { KeywordNames _ }
         parent                { KeywordParent _ }
@@ -183,23 +182,34 @@ LexerDefinitionList :: { [LexerDefinitionItem] }
                                              (Just $ ClientExpression body)] }
 
 
-TokenDefinitionList :: { [(GrammarSymbol, ClientPattern)] }
+TokenDefinitionList :: { [(GrammarSymbol, ClientPattern, Maybe ClientType)] }
     :
     { [] }
-    | TokenDefinitionList '|' identifier clientCode
+    | TokenDefinitionList '|' identifier clientCode MaybeType
     {% case ($3, $4) of
          (Identifier terminalLineNumber terminal, ClientCode _ body)
            -> if isLower $ head terminal
               then return $ $1 ++ [(IdentifierTerminal terminal,
-                                    ClientPattern body)]
+                                    ClientPattern body,
+                                    $5)]
               else throwParseError
                        $ "Terminal must begin with a lowercase letter at line "
                          ++ (show terminalLineNumber) }
-    | TokenDefinitionList '|' string clientCode
+    | TokenDefinitionList '|' string clientCode MaybeType
     { case ($3, $4) of
          (StringLiteral _ terminal, ClientCode _ body)
            -> $1 ++ [(StringTerminal terminal,
-                      ClientPattern body)] }
+                      ClientPattern body,
+                      $5)] }
+
+
+MaybeType :: { Maybe ClientType }
+    :
+    { Nothing }
+    | '::' clientCode
+    { case $2 of
+        (ClientCode _ body)
+          -> Just $ ClientType body }
 
 
 NonterminalDeclaration :: { Declaration }
@@ -266,11 +276,7 @@ NonterminalDeclarationRightHandSide :: { ([GrammarSymbol], ClientAction) }
     : '|' IdentifierList clientCode
     { case $3 of
         (ClientCode _ body)
-          -> ($2, ClientAction False body) }
-    | '|' IdentifierList monadic clientCode
-    { case $4 of
-        (ClientCode _ body)
-          -> ($2, ClientAction True body) }
+          -> ($2, ClientAction body) }
 
 IdentifierList :: { [GrammarSymbol] }
     :
@@ -317,7 +323,9 @@ data Declaration = MonadDeclaration LineNumber ClientType
                                     [LexerDefinitionItem]
                  | TokensDeclaration LineNumber
                                      ClientType
-                                     [(GrammarSymbol, ClientPattern)]
+                                     [(GrammarSymbol,
+                                       ClientPattern,
+                                       Maybe ClientType)]
                  | NonterminalDeclaration {
                      nonterminalDeclarationLineNumber
                          :: LineNumber,
@@ -354,11 +362,11 @@ instance Located LexerDefinitionItem where
     location (LexerSubexpressionItem result _ _ _) = result
 
 
-data GrammarSymbol = IdentifierTerminal String
+data GrammarSymbol = StartNonterminal String
+                   | Nonterminal String
+                   | IdentifierTerminal String
                    | StringTerminal String
                    | EndTerminal
-                   | Nonterminal String
-                   | StartNonterminal String
                      deriving (Eq, Ord)
 instance Show GrammarSymbol where
   show (IdentifierTerminal string) = string
@@ -413,7 +421,6 @@ data Token = EndOfInput LineNumber
            | KeywordInitial LineNumber
            | KeywordLexer LineNumber
            | KeywordMonad LineNumber
-           | KeywordMonadic LineNumber
            | KeywordName LineNumber
            | KeywordNames LineNumber
            | KeywordParent LineNumber
@@ -441,7 +448,6 @@ instance Located Token where
     location (KeywordInitial result) = result
     location (KeywordLexer result) = result
     location (KeywordMonad result) = result
-    location (KeywordMonadic result) = result
     location (KeywordName result) = result
     location (KeywordNames result) = result
     location (KeywordParent result) = result
@@ -472,7 +478,6 @@ instance Show Token where
     show (KeywordInitial _) = "INITIAL"
     show (KeywordLexer _) = "LEXER"
     show (KeywordMonad _) = "MONAD"
-    show (KeywordMonadic _) = "MONADIC"
     show (KeywordName _) = "NAME"
     show (KeywordNames _) = "NAMES"
     show (KeywordParent _) = "PARENT"
@@ -626,7 +631,6 @@ lexer all@(c:rest) = do
                         | identifier == "INITIAL" -> KeywordInitial lineNumber
                         | identifier == "LEXER" -> KeywordLexer lineNumber
                         | identifier == "MONAD" -> KeywordMonad lineNumber
-                        | identifier == "MONADIC" -> KeywordMonadic lineNumber
                         | identifier == "NAME" -> KeywordName lineNumber
                         | identifier == "NAMES" -> KeywordNames lineNumber
                         | identifier == "PARENT" -> KeywordParent lineNumber

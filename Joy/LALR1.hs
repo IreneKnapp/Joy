@@ -22,8 +22,10 @@ import Joy.Client
 import Joy.Specification (GrammarSymbol(..))
 import Joy.Uniqueness
 
+import Debug.Trace
 
-data Production = Production GrammarSymbol [GrammarSymbol] ClientAction
+
+data Production = Production GrammarSymbol [GrammarSymbol] (Maybe ClientAction)
 instance Eq Production where
   (==) (Production leftHandSideA rightHandSidesA _)
        (Production leftHandSideB rightHandSidesB _)
@@ -65,6 +67,7 @@ data InternalParseAction = InternalShift (Set Item)
 
 data ParseAction = Shift StateID
                  | Reduce ProductionID
+                 | Accept
                    deriving (Show)
 
 
@@ -78,14 +81,32 @@ compileParseTable :: [GrammarSymbol]
                   -> [Production]
                   -> [GrammarSymbol]
                   -> (ParseTable,
+                      [GrammarSymbol],
                       Map StateID (Set Item),
                       Map ProductionID Production,
                       Map (StateID, GrammarSymbol)
                           (Set (StateID, GrammarSymbol)),
                       Map (StateID, ProductionID)
                           (Set (StateID, GrammarSymbol)))
-compileParseTable nonterminals terminals allProductions startSymbols =
-  let productionIDMap :: Map Production ProductionID
+compileParseTable unaugmentedNonterminals
+                  unaugmentedTerminals
+                  unaugmentedAllProductions
+                  unaugmentedStartSymbols =
+  let nonterminals = startSymbols ++ unaugmentedNonterminals
+      
+      terminals = [EndTerminal] ++ unaugmentedTerminals
+      
+      allProductions = (map (\(nonterminal, startNonterminal) ->
+                               Production startNonterminal
+                                          [nonterminal, EndTerminal]
+                                          Nothing)
+                            $ zip unaugmentedStartSymbols startSymbols)
+                       ++ unaugmentedAllProductions
+      
+      startSymbols = map (\(Nonterminal string) -> StartNonterminal string)
+                         unaugmentedStartSymbols
+      
+      productionIDMap :: Map Production ProductionID
       productionIDMap = Map.fromList $ zip allProductions [0..]
       
       productionID :: Production -> ProductionID
@@ -111,7 +132,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
         = fromJust $ Map.lookup symbol productionsOfSymbolMap
       
       computeSymbolNullable :: GrammarSymbol -> Set GrammarSymbol -> Bool
-      computeSymbolNullable symbol@(Nonterminal _) visited =
+      computeSymbolNullable symbol visited =
         any (\(Production _ rightHandSymbols _) ->
                all (\rightHandSymbol ->
                       and [not $ Set.member rightHandSymbol visited,
@@ -119,7 +140,6 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                                  $ Set.insert symbol visited])
                    rightHandSymbols)
             $ productionsOfSymbol symbol
-      computeSymbolNullable _ _ = False
       
       symbolNullableMap :: Map GrammarSymbol Bool
       symbolNullableMap
@@ -231,26 +251,42 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                 Map StateID (Set Item),
                                 Map ProductionID Production)
       externalizeParseTable (startStateMap, transitionMap) =
-        let allStates = Map.keys transitionMap
+        let allStatesUnfiltered = Map.keys transitionMap
+            itemIsPastEnd (Item (Production _ rightHandSides _) index) =
+              elem EndTerminal $ take index rightHandSides
+            removedStates = filter (\state ->
+                                      all itemIsPastEnd $ Set.elems state)
+                                   allStatesUnfiltered
+            allStates = allStatesUnfiltered \\ removedStates
             stateIDMap = Map.fromList $ zip allStates [0..]
             stateID state = fromJust $ Map.lookup state stateIDMap
             idStateMap = Map.fromList $ zip [0..] allStates
         in (ParseTable
              (Map.map stateID startStateMap)
              $ Map.fromList
+             $ concat
              $ map (\(state, actionMap) ->
-                      (stateID state,
-                       Map.map (map (\action ->
-                                       case action of
-                                         InternalShift state -> Shift $ stateID state
-                                         InternalReduce production
-                                           -> Reduce $ productionID production))
-                               actionMap))
+                      if elem state removedStates
+                        then []
+                        else
+                          [(stateID state,
+                            Map.map (map (\action ->
+                                            case action of
+                                              InternalShift state
+                                                | elem state removedStates
+                                                  -> Accept
+                                                | otherwise
+                                                  -> Shift $ stateID state
+                                              InternalReduce production
+                                                -> Reduce $ productionID
+                                                             production))
+                                            actionMap)])
                    $ Map.toList transitionMap,
             idStateMap,
             idProductionMap)
       
       computeLALR1ParseTable :: (ParseTable,
+                                 [GrammarSymbol],
                                  Map StateID (Set Item),
                                  Map ProductionID Production,
                                  Map (StateID, GrammarSymbol)
@@ -278,6 +314,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             lalr1ParseTable = filterReductionsByLookaheadSets lr0ParseTable
                                                               lookaheadSetMap
         in (lalr1ParseTable,
+            nonterminals,
             stateDebugInfo,
             productionDebugInfo,
             includesSetMap,
@@ -304,11 +341,14 @@ compileParseTable nonterminals terminals allProductions startSymbols =
             transitionIsTerminalShift (foundSymbol, actionList) =
               let isTerminal = case foundSymbol of
                                  Nonterminal _ -> False
+                                 StartNonterminal _ -> False
                                  IdentifierTerminal _ -> True
                                  StringTerminal _ -> True
+                                 EndTerminal -> True
                   isShift = any (\action -> case action of
                                               Shift _ -> True
-                                              Reduce _ -> False)
+                                              Reduce _ -> False
+                                              Accept -> True)
                                 actionList
               in isTerminal && isShift
             
@@ -364,7 +404,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
               let isEpsilonNonterminal = symbolNullable foundSymbol
                   isShift = any (\action -> case action of
                                               Shift _ -> True
-                                              Reduce _ -> False)
+                                              Reduce _ -> False
+                                              Accept -> True)
                                 actionList
               in isEpsilonNonterminal && isShift
             
@@ -405,7 +446,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                  Just actionList -> actionList
               in any (\action -> case action of
                                    Shift _ -> True
-                                   Reduce _ -> False)
+                                   Reduce _ -> False
+                                   Accept -> True)
                      actionList
         in Set.fromList
            $ filter transitionIsShift
@@ -460,7 +502,8 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                  Just actionList -> actionList
                   isShift = any (\action -> case action of
                                               Shift _ -> True
-                                              Reduce _ -> False)
+                                              Reduce _ -> False
+                                              Accept -> True)
                                 actionList
               in if isShift
                    then combineResults $ map (visitProduction state nonterminal)
@@ -516,7 +559,10 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                                                  includeResults
                                                  newIncludeResults
                              in case foundSymbol of
-                                  Nonterminal _ -> (includeResults', foundState')
+                                  Nonterminal _ ->
+                                    (includeResults', foundState')
+                                  StartNonterminal _ ->
+                                    (includeResults', foundState')
                                   _ -> (includeResults, foundState'))
                           (Map.empty, state)
                           $ zip rightHandSides [0..]
@@ -617,6 +663,7 @@ compileParseTable nonterminals terminals allProductions startSymbols =
                           Nothing -> Set.empty
                           Just lookaheadSet -> lookaheadSet
                   in Set.member symbol lookaheadSet
+                Accept -> True
         in ParseTable startStateMap visitAll
       
   in computeLALR1ParseTable

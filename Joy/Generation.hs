@@ -67,6 +67,8 @@ data GenerationState = GenerationState {
         generationStateMaybeTerminals :: Maybe [GrammarSymbol],
         generationStateMaybeTerminalPatternMap :: Maybe (Map GrammarSymbol
                                                              ClientPattern),
+        generationStateMaybeTerminalTypeMap :: Maybe (Map GrammarSymbol
+                                                          ClientType),
         generationStateMaybePatternTerminalAlist :: Maybe [(ClientPattern,
                                                             GrammarSymbol)],
         generationStateMaybeNonterminals :: Maybe [GrammarSymbol],
@@ -75,6 +77,7 @@ data GenerationState = GenerationState {
         generationStateMaybeProductions :: Maybe [Production],
         generationStateMaybeParserInformationMap
           :: Maybe (Map GrammarSymbol ParserInformation),
+        generationStateMaybeAugmentedNonterminals :: Maybe [GrammarSymbol],
         generationStateMaybeParseTable :: Maybe ParseTable,
         generationStateMaybeParseTableStateDebugInfo
           :: Maybe (Map StateID (Set Item)),
@@ -125,11 +128,13 @@ mkGenerationState inputFilename outputFilename
         generationStateMaybeAnyParsersSpecified = Nothing,
         generationStateMaybeTerminals = Nothing,
         generationStateMaybeTerminalPatternMap = Nothing,
+        generationStateMaybeTerminalTypeMap = Nothing,
         generationStateMaybePatternTerminalAlist = Nothing,
         generationStateMaybeNonterminals = Nothing,
         generationStateMaybeNonterminalTypeMap = Nothing,
         generationStateMaybeProductions = Nothing,
         generationStateMaybeParserInformationMap = Nothing,
+        generationStateMaybeAugmentedNonterminals = Nothing,
         generationStateMaybeParseTable = Nothing,
         generationStateMaybeParseTableStateDebugInfo = Nothing,
         generationStateMaybeParseTableProductionDebugInfo = Nothing,
@@ -372,7 +377,7 @@ generate = do
   compileLexers
   -- debugLexers
   compileParsers
-  -- debugParseTable
+  debugParseTable
   writeOutput
 
 
@@ -407,7 +412,7 @@ processMonadDeclaration = do
                             $ fromJust
                             $ generationStateMaybeSpecification state
   case declarations of
-    [] -> return ()
+    [] -> fail $ "No MONAD declaration."
     [MonadDeclaration _ clientType]
         -> put $ state { generationStateMaybeMonadType = Just clientType }
     _ -> fail $ "Multiple MONAD declarations, at lines "
@@ -589,16 +594,26 @@ processTokensDeclaration = do
     [] -> fail $ "Missing TOKENS declaration."
     [TokensDeclaration _ clientType definitions]
         -> do
-             let terminals = map fst definitions
-                 terminalPatternMap = Map.fromList definitions
+             let terminals = map (\(terminal, _, _) -> terminal) definitions
+                 terminalPatternMap
+                   = Map.fromList
+                     $ map (\(terminal, pattern, _) -> (terminal, pattern))
+                           definitions
+                 terminalTypeMap
+                   = Map.fromList
+                     $ mapMaybe (\(terminal, _, maybeType) ->
+                                   fmap (\type' -> (terminal, type')) maybeType)
+                                definitions
                  patternTerminalAlist
-                   = map (\(terminal, pattern) -> (pattern, terminal))
+                   = map (\(terminal, pattern, _) -> (pattern, terminal))
                          definitions
              put $ state {
                       generationStateMaybeTokenType = Just clientType,
                       generationStateMaybeTerminals = Just terminals,
                       generationStateMaybeTerminalPatternMap
                         = Just terminalPatternMap,
+                      generationStateMaybeTerminalTypeMap
+                        = Just terminalTypeMap,
                       generationStateMaybePatternTerminalAlist
                         = Just patternTerminalAlist
                     }
@@ -634,7 +649,7 @@ processNonterminalDeclarations = do
                    in map (\(rightHandSide, clientAction)
                              -> Production leftHandSide
                                            rightHandSide
-                                           clientAction)
+                                           $ Just clientAction)
                           rightHandSidesAndClientActions)
                 declarations
       parserInformationMap
@@ -774,12 +789,15 @@ compileParsers = do
                  } <- get
   let startSymbols = Map.keys parserInformationMap
       (parseTable,
+       augmentedNonterminals,
        stateDebugInfo,
        productionDebugInfo,
        includesRelationDebugInfo,
        lookbackRelationDebugInfo)
         = compileParseTable nonterminals terminals productions startSymbols
   put $ state {
+          generationStateMaybeAugmentedNonterminals
+            = Just augmentedNonterminals,
           generationStateMaybeParseTable = Just parseTable,
           generationStateMaybeParseTableStateDebugInfo = Just stateDebugInfo,
           generationStateMaybeParseTableProductionDebugInfo
@@ -819,8 +837,10 @@ outputHeader file = do
                             ++ " at "
                             ++ formattedTimestamp
                             ++ "."
-  liftIO $ hPutStrLn file $ "{-# LANGUAGE TypeSynonymInstances, MultiParamTypeClasses,"
-  liftIO $ hPutStrLn file $ "             FunctionalDependencies #-}"
+  liftIO $ hPutStrLn file
+           $ "{-# LANGUAGE TypeSynonymInstances, MultiParamTypeClasses,"
+  liftIO $ hPutStrLn file
+           $ "             FunctionalDependencies, DeriveDataTypeable #-}"
 
 
 outputPrologue :: Handle -> Generation ()
@@ -850,9 +870,11 @@ outputClientRaw file (ClientRaw lineNumber content) = do
 outputSubheader :: Handle -> Generation ()
 outputSubheader file = do
   liftIO $ hPutStr file $ "{-# LINE 1 \"(Code generated by Joy)\" #-}\n"
+  liftIO $ hPutStr file $ "import Data.Dynamic\n"
   liftIO $ hPutStr file $ "import Data.Word\n"
   liftIO $ hPutStr file $ "import Data.Map (Map)\n"
   liftIO $ hPutStr file $ "import qualified Data.Map as Map\n"
+  liftIO $ hPutStr file $ "import Data.Maybe\n"
   liftIO $ hPutStr file $ "\n"
 
 
@@ -996,24 +1018,45 @@ outputLexer file name binaryFlag anyLexer = do
 outputParsers :: Handle -> Generation ()
 outputParsers file = do
   GenerationState {
+      generationStateMaybeMonadType = Just (ClientType monadTypeString),
       generationStateMaybeTokenType = Just (ClientType tokenTypeString),
       generationStateMaybeTerminals = Just terminals,
-      generationStateMaybeNonterminals = Just nonterminals,
+      generationStateMaybeAugmentedNonterminals = Just nonterminals,
+      generationStateMaybeNonterminalTypeMap = Just nonterminalTypeMap,
+      generationStateMaybeTerminalPatternMap = Just terminalPatternMap,
+      generationStateMaybeTerminalTypeMap = Just terminalTypeMap,
       generationStateMaybePatternTerminalAlist = Just patternTerminalAlist,
       generationStateMaybeParseTable
-        = Just (ParseTable startStateMap transitionMap)
+        = Just (ParseTable startStateMap transitionMap),
+      generationStateMaybeParseTableProductionDebugInfo
+        = Just productionDebugInfo,
+      generationStateMaybeParserInformationMap
+        = Just parserInformationMap
     } <- get
-  let symbolIDMap = Map.fromList $ zip (terminals ++ nonterminals) [1..]
+  let symbolIDMap = Map.fromList
+                    $ zip ([EndTerminal] ++ terminals ++ nonterminals) [0..]
+      filteredProductionDebugInfo
+        = Map.filter (\(Production leftHandSide _ _) ->
+                        case leftHandSide of
+                          StartNonterminal _ -> False
+                          _ -> True)
+                     productionDebugInfo
       out string = liftIO $ hPutStr file string
+  out $ "data ParseAction = Shift Word64\n"
+  out $ "                 | Reduce Word64\n"
+  out $ "                 | Accept\n"
+  out $ "\n"
+  out $ "\n"
   out $ "parseTable :: Map (Word64, Word64)\n"
-  out $ "                  [Either Word64 Word64]\n"
+  out $ "                  [ParseAction]\n"
   out $ "parseTable = Map.fromList ["
         ++ (intercalate
              ",\n                           "
              $ concat
                $ map (\(state, actionListMap) ->
                         map (\(symbol, actionList) ->
-                               let symbolID = fromJust $ Map.lookup symbol symbolIDMap
+                               let symbolID = fromJust
+                                              $ Map.lookup symbol symbolIDMap
                                in "((" ++ show state
                                   ++ ", " ++ show symbolID
                                   ++ "), ["
@@ -1022,9 +1065,11 @@ outputParsers file = do
                                        $ map (\action ->
                                                 case action of
                                                   Shift resultState ->
-                                                    "Left " ++ show resultState
+                                                    "Shift " ++ show resultState
                                                   Reduce production ->
-                                                    "Right " ++ show production)
+                                                    "Reduce " ++ show production
+                                                  Accept ->
+                                                    "Accept")
                                              actionList)
                                   ++ "])")
                             $ Map.toList actionListMap)
@@ -1035,15 +1080,165 @@ outputParsers file = do
   out $ "encodeToken :: " ++ tokenTypeString ++ " -> Word64\n"
   out $ "encodeToken token =\n"
   out $ "  case token of\n"
-  mapM_ (\(pattern, symbol) ->
+  mapM_ (\(pattern, symbol) -> do
            out $ "    "
-                 ++ (clientPatternSubstituteWildcards pattern)
+                 ++ (clientPatternSubstituteWildcard pattern)
                  ++ " -> "
                  ++ (show $ fromJust $ Map.lookup symbol symbolIDMap)
                  ++ "\n")
         patternTerminalAlist
   out $ "\n"
   out $ "\n"
-  out $ "parseExpression :: String -> Parse Int\n"
-  out $ "parseExpression = return undefined\n"
-  out $ "-- PARSER GOES HERE\n"
+  out $ "productionNValues :: Word64 -> Int\n"
+  mapM_ (\(productionID, (Production _ rightHandSides _)) -> do
+           out $ "productionNValues "
+                 ++ (show productionID)
+                 ++ " = "
+                 ++ (show $ length rightHandSides)
+                 ++ "\n")
+        $ Map.toList filteredProductionDebugInfo
+  out $ "\n"
+  out $ "\n"
+  out $ "productionLeftHandSide :: Word64 -> Word64\n"
+  mapM_ (\(productionID, (Production leftHandSide _ _)) -> do
+           out $ "productionLeftHandSide "
+                 ++ (show productionID)
+                 ++ " = "
+                 ++ (show $ fromJust $ Map.lookup leftHandSide symbolIDMap)
+                 ++ "\n")
+        $ Map.toList filteredProductionDebugInfo
+  out $ "\n"
+  out $ "\n"
+  out $ "tokenToDynamic :: " ++ tokenTypeString ++ " -> Dynamic\n"
+  mapM_ (\pattern -> do
+           out $ "tokenToDynamic "
+                 ++ (clientPatternSubstituteName pattern "value")
+                 ++ " = toDyn value\n")
+        $ map fst patternTerminalAlist
+  out $ "\n"
+  out $ "\n"
+  out $ "reduce :: Word64 -> [Dynamic] -> " ++ monadTypeString ++ " Dynamic\n"
+  mapM_ (\(productionID,
+           production@(Production leftHandSide
+                                  rightHandSides
+                                  (Just clientAction))) -> do
+         let Just (ClientType returnTypeString)
+               = Map.lookup leftHandSide nonterminalTypeMap
+         out $ "-- " ++ show production ++ "\n"
+         out $ "reduce " ++ (show productionID) ++ " ["
+               ++ (intercalate ", "
+                               $ map (\i -> "joy_" ++ show i ++ "_dynamic")
+                                     [1 .. length rightHandSides])
+               ++ "] = do\n"
+         out $ "  let "
+               ++ (intercalate
+                    "\n      "
+                    $ map (\(i, symbol) ->
+                             "joy_" ++ (show i)
+                             ++ " = fromJust $ fromDynamic joy_"
+                             ++ (show i) ++ "_dynamic :: "
+                             ++ (case symbol of
+                                   Nonterminal _ ->
+                                     let Just (ClientType typeString)
+                                           = Map.lookup symbol
+                                                        nonterminalTypeMap
+                                     in typeString
+                                   _ -> case Map.lookup symbol
+                                                        terminalTypeMap of
+                                          Nothing -> tokenTypeString
+                                          Just (ClientType typeString) ->
+                                            typeString))
+                          $ zip [1..] rightHandSides)
+               ++ "\n"
+         out $ "  return $ toDyn ("
+               ++ clientActionSubstitute clientAction
+               ++ " :: "
+               ++ returnTypeString
+               ++ ")\n")
+        $ Map.toList filteredProductionDebugInfo
+  out $ "\n"
+  out $ "\n"
+  out $ "parse :: Word64 -> Bool -> String -> Parse Dynamic\n"
+  out $ "parse startState partial input = do\n"
+  out $ "  let loop input stateStack valueStack = do\n"
+  out $ "        maybeTokenAndRest <- lexer input\n"
+  out $ "        case maybeTokenAndRest of\n"
+  out $ "          Nothing -> do\n"
+  out $ "            loop' input\n"
+  out $ "                  stateStack\n"
+  out $ "                  valueStack\n"
+  out $ "                  undefined\n"
+  out $ "                  0\n"
+  out $ "          Just (token, rest) -> do\n"
+  out $ "            let encodedToken = encodeToken token\n"
+  out $ "            loop' rest\n"
+  out $ "                  stateStack\n"
+  out $ "                  valueStack\n"
+  out $ "                  token\n"
+  out $ "                  encodedToken\n"
+  out $ "      loop' input\n"
+  out $ "            stateStack@(topState:_)\n"
+  out $ "            valueStack\n"
+  out $ "            token\n"
+  out $ "            encodedToken = do\n"
+  out $ "        case Map.lookup (topState, encodedToken) parseTable of\n"
+  out $ "          Nothing -> throwError $ ParseError $ \"Unexpected token.\"\n"
+  out $ "          Just [] -> throwError\n"
+  out $ "                      $ ParseError $ \"No actions for token \"\n"
+  out $ "                                     ++ show encodedToken\n"
+  out $ "                                     ++ \" in state \"\n"
+  out $ "                                     ++ show topState ++ \".\"\n"
+  out $ "          Just (Accept:_) -> do\n"
+  out $ "                    return $ head valueStack\n"
+  out $ "          Just (Shift newState:_) -> do\n"
+  out $ "                    let newValue = tokenToDynamic token\n"
+  out $ "                    loop input\n"
+  out $ "                         (newState:stateStack)\n"
+  out $ "                         (newValue:valueStack)\n"
+  out $ "          Just (Reduce production:_) -> do\n"
+  out $ "                    let nValues = productionNValues production\n"
+  out $ "                        rightHandSideValues\n"
+  out $ "                          = reverse $ take nValues valueStack\n"
+  out $ "                    leftHandValue\n"
+  out $ "                      <- reduce production rightHandSideValues\n"
+  out $ "                    let leftHandValueEncoded\n"
+  out $ "                          = productionLeftHandSide production\n"
+  out $ "                        newStateStack = drop nValues stateStack\n"
+  out $ "                        newValueStack = drop nValues valueStack\n"
+  out $ "                    if partial && null newStateStack\n"
+  out $ "                      then return leftHandValue\n"
+  out $ "                      else do\n"
+  out $ "                        let (newTopState:_) = newStateStack\n"
+  out $ "                            Just (Shift stateToShift:_)\n"
+  out $ "                              = Map.lookup (newTopState,\n"
+  out $ "                                            leftHandValueEncoded)\n"
+  out $ "                                           parseTable\n"
+  out $ "                        loop' input\n"
+  out $ "                              (stateToShift:newStateStack)\n"
+  out $ "                              (leftHandValue:newValueStack)\n"
+  out $ "                              token\n"
+  out $ "                              encodedToken\n"
+  out $ "  loop input [startState] []\n"
+  mapM_ (\parserInformation -> do
+           let ClientIdentifier identifier
+                 = parserInformationClientIdentifier parserInformation
+               partial = parserInformationPartial parserInformation
+               symbol = parserInformationGrammarSymbol parserInformation
+               startSymbol = case symbol of
+                               Nonterminal string -> StartNonterminal string
+               Just startState = Map.lookup startSymbol startStateMap
+               Just (ClientType typeString)
+                 = Map.lookup symbol nonterminalTypeMap
+           out $ "\n"
+           out $ "\n"
+           out $ identifier
+                 ++ " :: String -> "
+                 ++ monadTypeString ++ " " ++ typeString ++ "\n"
+           out $ identifier ++ " input = do\n"
+           out $ "  result <- parse "
+                 ++ show startState ++ " "
+                 ++ show partial ++ " "
+                 ++ "input\n"
+           out $ "  return $ fromJust $ fromDynamic result\n")
+        $ Map.elems parserInformationMap
+  out $ "\n"

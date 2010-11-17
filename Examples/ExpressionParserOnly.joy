@@ -12,7 +12,7 @@ ERROR { parseError }
 USER LEXER { lexer }
 
 TOKEN TYPE { Token } NAMES
-| integer       { Integer $$ }
+| integer       { Integer $$ } :: { Int }
 | '+'           { Plus }
 | '-'           { Minus }
 | '*'           { Star }
@@ -55,6 +55,7 @@ data Token = Integer Int
            | Slash
            | LeftParenthesis
            | RightParenthesis
+	     deriving (Typeable)
 
 
 data ParseError = ParseError String
